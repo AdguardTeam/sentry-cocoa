@@ -66,6 +66,14 @@
 @class SentryUserFeedbackConfiguration;
 @protocol SentrySpan;
 
+typedef NS_ENUM(NSUInteger, SentryCrashCDeleteBehavior) {
+    SentryCrashCDeleteBehaviorNever,
+    SentryCrashCDeleteBehaviorOnSucess,
+    SentryCrashCDeleteBehaviorAlways
+};
+
+
+typedef BOOL (^SentryBeforeSendAllReports)(int reportCount);
 /**
  * Block used for returning after a request finished
  */

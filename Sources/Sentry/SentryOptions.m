@@ -81,6 +81,8 @@ NSString *const kSentryDefaultEnvironment = @"production";
 - (instancetype)init
 {
     if (self = [super init]) {
+        self.bundleName = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleName"] ?: @"Unknown";
+        self.deleteBehavior = SentryCrashCDeleteBehaviorAlways;
         self.enabled = YES;
         self.shutdownTimeInterval = 2.0;
         self.enableCrashHandler = YES;

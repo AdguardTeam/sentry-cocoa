@@ -12,8 +12,13 @@ NS_ASSUME_NONNULL_BEGIN
     SentryReplayOptions;
 @class SentryExperimentalOptions;
 
+
 NS_SWIFT_NAME(Options)
 @interface SentryOptions : NSObject
+
+@property (nullable, nonatomic, copy) NSString* bundleName;
+@property (nonatomic, assign) SentryCrashCDeleteBehavior deleteBehavior;
+@property (nullable, nonatomic, copy) SentryBeforeSendAllReports beforeSendAll;
 
 /**
  * The DSN tells the SDK where to send the events to. If this value is not provided, the SDK will

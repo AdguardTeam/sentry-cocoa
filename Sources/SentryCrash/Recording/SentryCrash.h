@@ -29,6 +29,7 @@
 #import "SentryCrashReportFilter.h"
 #import "SentryCrashReportWriter.h"
 #import "SentryDefines.h"
+#import "SentryOptions.h"
 
 typedef enum {
     SentryCrashDemangleLanguageNone = 0,
@@ -36,12 +37,6 @@ typedef enum {
     SentryCrashDemangleLanguageSwift = 2,
     SentryCrashDemangleLanguageAll = ~1
 } SentryCrashDemangleLanguage;
-
-typedef enum {
-    SentryCrashCDeleteNever,
-    SentryCrashCDeleteOnSucess,
-    SentryCrashCDeleteAlways
-} SentryCrashCDeleteBehavior;
 
 static NSString *const SENTRYCRASH_REPORT_ATTACHMENTS_ITEM = @"attachments";
 
@@ -59,7 +54,12 @@ static NSString *const SENTRYCRASH_REPORT_ATTACHMENTS_ITEM = @"attachments";
 SENTRY_NO_INIT
 
 /** Init SentryCrash instance with custom base path. */
-- (instancetype)initWithBasePath:(NSString *)basePath NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithBasePath:(NSString *)basePath;
+
+/** Init SentryCrash instance with custom base path, bundle name, and delete behavior. */
+- (instancetype)initWithBasePath:(NSString *)basePath
+                      bundleName:(NSString*)bundleName
+                  deleteBehavior:(SentryCrashCDeleteBehavior)deleteBehavior NS_DESIGNATED_INITIALIZER;
 
 /** Cache directory base path. */
 @property (nonatomic, readwrite, retain) NSString *basePath;
