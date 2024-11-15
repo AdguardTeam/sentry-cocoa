@@ -18,7 +18,7 @@ NS_SWIFT_NAME(Options)
 
 @property (nullable, nonatomic, copy) NSString* bundleName;
 @property (nonatomic, assign) SentryCrashCDeleteBehavior deleteBehavior;
-@property (nullable, nonatomic, copy) SentryBeforeSendAllReports beforeSendAll;
+@property (nonatomic, assign) BOOL dontSendReportsAtStartUp;
 
 /**
  * The DSN tells the SDK where to send the events to. If this value is not provided, the SDK will

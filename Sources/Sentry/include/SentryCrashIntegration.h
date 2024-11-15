@@ -1,5 +1,6 @@
 #import "SentryBaseIntegration.h"
 #import "SentrySwift.h"
+#import "SentryCrashReportFilter.h"
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -15,6 +16,7 @@ static NSString *const SentryDeviceContextAppMemoryKey = @"app_memory";
  * Needed for testing.
  */
 + (void)sendAllSentryCrashReports;
++ (void)sendAllSentryCrashReportsWithCompletion:(nullable SentryCrashReportFilterCompletion)onCompletion;
 
 @end
 

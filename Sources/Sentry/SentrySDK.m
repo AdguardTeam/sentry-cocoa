@@ -453,9 +453,9 @@ static NSDate *_Nullable startTimestamp = nil;
     [SentrySDK.currentHub endSession];
 }
 
-+ (void)sendAllSentryCrashReports
++ (void)sendAllSentryCrashReportsWithCompletion:(nullable SentryCrashReportFilterCompletion)onCompletion
 {
-    [SentryCrashIntegration sendAllSentryCrashReports];
+    [SentryCrashIntegration sendAllSentryCrashReportsWithCompletion:onCompletion];
 }
 
 /**

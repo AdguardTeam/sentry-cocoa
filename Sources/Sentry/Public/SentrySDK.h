@@ -60,7 +60,7 @@ SENTRY_NO_INIT
     NS_SWIFT_NAME(start(configureOptions:));
 
 
-+ (void)sendAllSentryCrashReports;
++ (void)sendAllSentryCrashReportsWithCompletion:(nullable SentryCrashReportFilterCompletion)onCompletion;
 
 /**
  * Captures a manually created event and sends it to Sentry.
