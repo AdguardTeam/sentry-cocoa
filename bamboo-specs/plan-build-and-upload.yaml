@@ -1,0 +1,55 @@
+version: 2
+plan:
+  project-key: MAC
+  key: SFM
+  name: Sentry-Cocoa for Mac
+  description: Clone of sentry-cocoa to build a static framework for Mac
+stages:
+  - Build Stage:
+      manual: false
+      final: false
+      jobs:
+        - Build Job
+
+Build Job:
+  key: JOB1
+  tasks:
+    - checkout:
+        description: Checkout Default Repository
+        force-clean-build: 'false'
+    - script:
+        description: Build And Upload to Artifactory
+        scripts: |
+          #!/usr/bin/arch -arm64 /bin/zsh
+          ./scripts/build-xcframework.sh
+          
+          XCF_NAME=Sentry.xcframework
+          XCF_ARCHIVE_NAME=${XCF_NAME}.zip
+          OUTDIR=Carthage
+        
+          /usr/bin/ditto -c -k --keepParent "${OUTDIR}/${XCF_NAME}" "${OUTDIR}/${XCF_ARCHIVE_NAME}" || exit 1
+          
+          AF_USER="${bamboo_artifactoryUser}"
+          AF_PASS="${bamboo_artifactoryPassword}"
+          AF_UPLOAD_PATH="https://art.int.agrd.dev/artifactory/adguard-pods/binaries/SentryCocoaMac"
+          
+          curl -u"${AF_USER}":"${AF_PASS}" -XPUT "${AF_UPLOAD_PATH}/${XCF_ARCHIVE_NAME}" -T "${OUTDIR}/{$XCF_ARCHIVE_NAME}" || exit 1
+  artifacts:
+    - name: Sentry.xcframework.zip
+      location: Carthage
+      pattern: Sentry.xcframework.zip
+      shared: true
+      required: true
+repositories:
+  - mac-sentry-cocoa:
+      scope: global
+branches:
+  create: for-pull-request
+  delete:
+    after-deleted-days: 1
+    after-inactive-days: 30
+  link-to-jira: true
+notifications: []
+labels: []
+other:
+  concurrent-build-plugin: system-default
