@@ -19,6 +19,7 @@ Build Job:
         force-clean-build: 'false'
     - script:
         description: Build And Upload to Artifactory
+        interpreter: SHELL
         scripts: |
           #!/usr/bin/arch -arm64 /bin/zsh
           ./scripts/build-xcframework.sh
