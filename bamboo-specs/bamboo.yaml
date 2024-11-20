@@ -23,18 +23,15 @@ Build Job:
       description: Checkout Default Repository
   - script:
       scripts: |
-        /usr/bin/arch -arm64 /bin/zsh
+        #!/usr/bin/arch -arm64 /bin/zsh
         ./scripts/build-xcframework.sh
-      description: Build static XCFramework
-  - script:
-      scripts: |
-          #!/usr/bin/arch -arm64 /bin/zsh
-          XCF_NAME=Sentry.xcframework
-          XCF_ARCHIVE_NAME=${XCF_NAME}.zip
-          OUTDIR=Carthage
-
-          /usr/bin/ditto -c -k --keepParent "${OUTDIR}/${XCF_NAME}" "${OUTDIR}/${XCF_ARCHIVE_NAME}" || exit 1
-      description: Upload to Artifactory
+        
+        XCF_NAME=Sentry.xcframework
+        XCF_ARCHIVE_NAME=${XCF_NAME}.zip
+        OUTDIR=Carthage
+        
+        /usr/bin/ditto -c -k --keepParent "${OUTDIR}/${XCF_NAME}" "${OUTDIR}/${XCF_ARCHIVE_NAME}" || exit 1
+        description: Build And Upload to Artifactory
   artifacts:
   - name: Sentry.xcframework.zip
     location: Carthage
@@ -49,16 +46,16 @@ Upload Job:
   - script:
       description: Upload to Artifactory
       scripts: |
-          #!/usr/bin/arch -arm64 /bin/zsh
-          XCF_NAME=Sentry.xcframework
-          XCF_ARCHIVE_NAME=${XCF_NAME}.zip
-          OUTDIR=Carthage
-
-          AF_USER="${bamboo_artifactoryUser}"
-          AF_PASS="${bamboo_artifactoryPassword}"
-          AF_UPLOAD_PATH="https://art.int.agrd.dev/artifactory/adguard-pods/binaries/SentryCocoaMac"
-
-          curl -u"${AF_USER}":"${AF_PASS}" -XPUT "${AF_UPLOAD_PATH}/${XCF_ARCHIVE_NAME}" -T "${OUTDIR}/{$XCF_ARCHIVE_NAME}" || exit 1
+        #!/usr/bin/arch -arm64 /bin/zsh
+        XCF_NAME=Sentry.xcframework
+        XCF_ARCHIVE_NAME=${XCF_NAME}.zip
+        OUTDIR=Carthage
+        
+        AF_USER="${bamboo_artifactoryUser}"
+        AF_PASS="${bamboo_artifactoryPassword}"
+        AF_UPLOAD_PATH="https://art.int.agrd.dev/artifactory/adguard-pods/binaries/SentryCocoaMac"
+        
+        curl -u"${AF_USER}":"${AF_PASS}" -XPUT "${AF_UPLOAD_PATH}/${XCF_ARCHIVE_NAME}" -T "${OUTDIR}/{$XCF_ARCHIVE_NAME}" || exit 1
   artifacts:
   - name: Sentry.xcframework.zip
     location: Carthage
