@@ -17,25 +17,29 @@ Build Job:
   tasks:
     - checkout:
         description: Checkout Default Repository
-        force-clean-build: 'false'
+        force-clean-build: 'true'
     - script: |
           #!/usr/bin/arch -arm64 /bin/zsh
           OUTDIR=Carthage
           XCF_NAME=Sentry.xcframework
-          echo "VERSION IS " `find ${OUTDIR}/${XCF_NAME}  -path '*/Resources/Info.plist' | head -1`
-          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString:" `find ${OUTDIR}/${XCF_NAME}  -path '*/Resources/Info.plist' | head -1`)
-          XCF_ARCHIVE_NAME=Sentry-${VER}.xcframework.zip
           UPLOAD_PATH="https://art.int.agrd.dev/artifactory/adguard-pods/binaries/SentryCocoaMac"
+
           # - Build
           ./scripts/build-xcframework.sh
+
           # - Archive
+          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString:" `find ${OUTDIR}/${XCF_NAME}  -path '*/Resources/Info.plist' | head -1`)
+          XCF_ARCHIVE_NAME=Sentry-${VER}.xcframework.zip
+
           /usr/bin/ditto -c -k --keepParent "${OUTDIR}/${XCF_NAME}" \
               "${OUTDIR}/${XCF_ARCHIVE_NAME}" || exit 1
+
           # - Upload to Artifactory
           curl -u"${bamboo_artifactoryUser}":"${bamboo_artifactoryPassword}" \
               -XPUT "${UPLOAD_PATH}/${XCF_ARCHIVE_NAME}" \
               -T "${OUTDIR}/{$XCF_ARCHIVE_NAME}" \
               || exit 1
+          mv ${XCF_ARCHIVE_NAME} ${XCF_NAME}.zip
   artifacts:
     - name: Sentry.xcframework.zip
       location: Carthage
