@@ -20,9 +20,10 @@ Build Job:
         force-clean-build: 'false'
     - script: |
           #!/usr/bin/arch -arm64 /bin/zsh
-          XCF_NAME=Sentry.xcframework
-          XCF_ARCHIVE_NAME=${XCF_NAME}.zip
           OUTDIR=Carthage
+          XCF_NAME=Sentry.xcframework
+          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString:" `find ${OUTDIR}/${XCF_NAME}  -path '*/Resources/Info.plist' | head -1`)
+          XCF_ARCHIVE_NAME=Sentry-${VER}.xcframework.zip
           UPLOAD_PATH="https://art.int.agrd.dev/artifactory/adguard-pods/binaries/SentryCocoaMac"
           # - Build
           ./scripts/build-xcframework.sh
