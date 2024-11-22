@@ -39,7 +39,9 @@ Build Job:
               -XPUT "${UPLOAD_PATH}/${XCF_ARCHIVE_NAME}" \
               -T "${OUTDIR}/{$XCF_ARCHIVE_NAME}" \
               || exit 1
-          mv ${XCF_ARCHIVE_NAME} ${XCF_NAME}.zip
+
+          # - Create local artifact on Bamboo w/o version number
+          mv "${OUTDIR}/${XCF_ARCHIVE_NAME}" "${OUTDIR}/${XCF_NAME}.zip"
   artifacts:
     - name: Sentry.xcframework.zip
       location: Carthage
