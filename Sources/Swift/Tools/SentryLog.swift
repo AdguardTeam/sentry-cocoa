@@ -6,7 +6,7 @@ class SentryLog: NSObject {
     
     static private(set) var isDebug = true
     static private(set) var diagnosticLevel = SentryLevel.error
-    private static var logOutput = SentryLogOutput()
+    private static var logOutput: SentryLogOutputProtocol = SentryLogOutput()
     private static var logConfigureLock = NSLock()
 
     @objc
@@ -33,17 +33,18 @@ class SentryLog: NSObject {
         return isDebug && level != .none && level.rawValue >= diagnosticLevel.rawValue
     }
  
-    #if TEST || TESTCI
-    
-    static func setOutput(_ output: SentryLogOutput) {
+    //ADGUARD: #if TEST || TESTCI
+    @objc
+    static func setOutput(_ output: SentryLogOutputProtocol) {
         logOutput = output
     }
     
-    static func getOutput() -> SentryLogOutput {
+    @objc
+    static func getOutput() -> SentryLogOutputProtocol {
         return logOutput
     }
     
-    #endif
+    //ADGUARD: #endif
 }
 
 extension SentryLog {

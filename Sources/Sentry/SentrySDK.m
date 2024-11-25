@@ -104,6 +104,12 @@ static NSDate *_Nullable startTimestamp = nil;
     return replay;
 }
 #endif
+
++ (void)setLogOutput:(id <SentryLogOutputProtocol> _Nonnull) output
+{
+    [SentryLog setOutput: output];
+}
+
 /** Internal, only needed for testing. */
 + (void)setCurrentHub:(nullable SentryHub *)hub
 {

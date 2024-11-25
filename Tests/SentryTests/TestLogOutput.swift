@@ -15,7 +15,8 @@ class TestLogOutput: SentryLogOutput {
             return _loggedMessages
         }
     }
-    
+
+    @objc
     override func log(_ message: String) {
         if callSuperWhenLogging {
             super.log(message)

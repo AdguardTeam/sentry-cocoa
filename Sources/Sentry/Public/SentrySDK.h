@@ -60,6 +60,7 @@ SENTRY_NO_INIT
     NS_SWIFT_NAME(start(configureOptions:));
 
 
++ (void) setLogOutput: (id <SentryLogOutputProtocol> _Nonnull) output;
 + (void)sendAllSentryCrashReportsWithCompletion:(nullable SentryCrashReportFilterCompletion)onCompletion;
 
 /**

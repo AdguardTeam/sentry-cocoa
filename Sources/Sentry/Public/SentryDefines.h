@@ -73,6 +73,10 @@ typedef NS_ENUM(NSUInteger, SentryCrashCDeleteBehavior) {
 };
 
 
+@protocol SentryLogOutputProtocol
+- (void) log: (NSString * _Nonnull) message;
+@end
+
 /** Callback for filter operations.
  *
  * @param filteredReports The filtered reports (may be incomplete if "completed"
