@@ -29,7 +29,8 @@ Build Job:
 
           # - Archive
           VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString:" `find ${OUTDIR}/${XCF_NAME}  -path '*/Resources/Info.plist' | head -1`)
-          XCF_ARCHIVE_NAME=Sentry-${VER}.xcframework.zip
+          AG_VER="ag001"
+          XCF_ARCHIVE_NAME=Sentry-${VER}-${AG_VER}.xcframework.zip
 
           /usr/bin/ditto -c -k --keepParent "${OUTDIR}/${XCF_NAME}" \
               "${OUTDIR}/${XCF_ARCHIVE_NAME}" || exit 1
