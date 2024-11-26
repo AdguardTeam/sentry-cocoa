@@ -142,7 +142,9 @@ static NSObject *sentryDependencyContainerLock;
         @synchronized(sentryDependencyContainerLock) {
             if (_crashReporter == nil) {
                 _crashReporter =
-                    [[SentryCrash alloc] initWithBasePath:SentrySDK.options.cacheDirectoryPath];
+                    [[SentryCrash alloc] initWithBasePath:SentrySDK.options.cacheDirectoryPath
+                                               bundleName:SentrySDK.options.bundleName
+                                           deleteBehavior:SentrySDK.options.deleteBehavior];
             }
         }
     }

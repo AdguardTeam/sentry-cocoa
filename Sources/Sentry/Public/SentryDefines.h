@@ -66,6 +66,30 @@
 @class SentryUserFeedbackConfiguration;
 @protocol SentrySpan;
 
+typedef NS_ENUM(NSUInteger, SentryCrashCDeleteBehavior) {
+    SentryCrashCDeleteBehaviorNever,
+    SentryCrashCDeleteBehaviorOnSucess,
+    SentryCrashCDeleteBehaviorAlways
+};
+
+
+@protocol SentryLogOutputProtocol
+- (void) log: (NSString * _Nonnull) message;
+@end
+
+/** Callback for filter operations.
+ *
+ * @param filteredReports The filtered reports (may be incomplete if "completed"
+ *                        is false).
+ * @param completed True if filtering completed.
+ *                  Can be false due to a non-erroneous condition (such as a
+ *                  user cancelling the operation).
+ * @param error Non-nil if an error occurred.
+ */
+typedef void (^SentryCrashReportFilterCompletion)(
+    NSArray *_Nullable filteredReports, BOOL completed, NSError *_Nullable error);
+
+
 /**
  * Block used for returning after a request finished
  */

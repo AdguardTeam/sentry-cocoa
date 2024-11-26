@@ -60,6 +60,8 @@
 @property (nonatomic, readwrite, assign) SentryCrashMonitorType monitoringWhenUninstalled;
 @property (nonatomic, readwrite, assign) BOOL monitoringFromUninstalledToRestore;
 
++ (NSString *)clearBundleName:(NSString *)filename;
++ (NSString *)getBundleName;
 - (NSString *)getBundleName;
 
 @end
@@ -89,10 +91,23 @@
 
 - (instancetype)initWithBasePath:(NSString *)basePath
 {
+    return  [self initWithBasePath:basePath
+                        bundleName:[self.class getBundleName]
+                    deleteBehavior:SentryCrashCDeleteBehaviorAlways];
+}
+
+- (instancetype)initWithBasePath:(NSString *)basePath
+                      bundleName:(NSString*)bundleName
+                  deleteBehavior:(SentryCrashCDeleteBehavior)deleteBehavior
+{
     if ((self = [super init])) {
-        self.bundleName = [self getBundleName];
+        NSString *bname = (bundleName
+                           ? [self.class clearBundleName: bundleName]
+                           : [self.class getBundleName]);
+
+        self.bundleName = bname;
         self.basePath = basePath;
-        self.deleteBehaviorAfterSendAll = SentryCrashCDeleteAlways;
+        self.deleteBehaviorAfterSendAll = deleteBehavior;
         self.introspectMemory = YES;
         self.maxReportCount = 5;
         self.monitoring = SentryCrashMonitorTypeProductionSafeMinimal;
@@ -229,7 +244,7 @@
         self.monitoringFromUninstalledToRestore = NO;
     }
 
-    NSString *pathEnd = [@"SentryCrash" stringByAppendingPathComponent:[self getBundleName]];
+    NSString *pathEnd = [@"SentryCrash" stringByAppendingPathComponent:self.bundleName];
     NSString *installPath = [self.basePath stringByAppendingPathComponent:pathEnd];
 
     _monitoring = sentrycrash_install(self.bundleName.UTF8String, installPath.UTF8String);
@@ -315,8 +330,8 @@
              if (error != nil) {
                  SENTRY_LOG_ERROR(@"Failed to send reports: %@", error);
              }
-             if ((self.deleteBehaviorAfterSendAll == SentryCrashCDeleteOnSucess && completed)
-                 || self.deleteBehaviorAfterSendAll == SentryCrashCDeleteAlways) {
+             if ((self.deleteBehaviorAfterSendAll == SentryCrashCDeleteBehaviorOnSucess && completed)
+                 || self.deleteBehaviorAfterSendAll == SentryCrashCDeleteBehaviorAlways) {
                  sentrycrash_deleteAllReports();
              }
              sentrycrash_callCompletion(onCompletion, filteredReports, completed, error);
@@ -521,17 +536,22 @@ SYNTHESIZE_CRASH_STATE_PROPERTY(BOOL, crashedLastLaunch)
     sentrycrash_notifyAppTerminate();
 }
 
-- (NSString *)clearBundleName:(NSString *)filename
++ (NSString *)clearBundleName:(NSString *)filename
 {
     // The bundle name is used as file name, therefore "/" is not allowed.
     return [filename stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
 }
 
-- (NSString *)getBundleName
++ (NSString *)getBundleName
 {
     NSString *bundleName =
         [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleName"] ?: @"Unknown";
     return [self clearBundleName:bundleName];
+}
+
+- (NSString *)getBundleName
+{
+    return [self.class getBundleName];
 }
 
 @end

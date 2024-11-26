@@ -23,6 +23,7 @@
 #import "SentrySerialization.h"
 #import "SentrySwift.h"
 #import "SentryTransactionContext.h"
+#import "SentryCrashIntegration.h"
 
 #if TARGET_OS_OSX
 #    import "SentryCrashExceptionApplication.h"
@@ -103,6 +104,12 @@ static NSDate *_Nullable startTimestamp = nil;
     return replay;
 }
 #endif
+
++ (void)setLogOutput:(id <SentryLogOutputProtocol> _Nonnull) output
+{
+    [SentryLog setOutput: output];
+}
+
 /** Internal, only needed for testing. */
 + (void)setCurrentHub:(nullable SentryHub *)hub
 {
@@ -212,8 +219,11 @@ static NSDate *_Nullable startTimestamp = nil;
     SENTRY_LOG_DEBUG(@"Configured options: %@", options.debugDescription);
 #endif // defined(DEBUG) || defined(TEST) || defined(TESTCI)
 
-#if TARGET_OS_OSX
+
+#if TARGET_OS_OSX && MACH_O_TYPE != staticlib
     // Reference to SentryCrashExceptionApplication to prevent compiler from stripping it
+    // ADGUARD: This breaks Network Extension. Since this is not required
+    // when creating a static library, I just added a check for MACH_O_TYPE.
     [SentryCrashExceptionApplication class];
 #endif
 
@@ -447,6 +457,11 @@ static NSDate *_Nullable startTimestamp = nil;
 + (void)endSession
 {
     [SentrySDK.currentHub endSession];
+}
+
++ (void)sendAllSentryCrashReportsWithCompletion:(nullable SentryCrashReportFilterCompletion)onCompletion
+{
+    [SentryCrashIntegration sendAllSentryCrashReportsWithCompletion:onCompletion];
 }
 
 /**

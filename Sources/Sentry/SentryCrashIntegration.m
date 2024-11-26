@@ -151,7 +151,8 @@ static NSString *const LOCALE_KEY = @"locale";
         // deleteAllReports, which fails it can't access g_reportsPath. We could fix SentryCrash or
         // just not call sendAllReports as it doesn't make sense to call it twice as described
         // above.
-        if (canSendReports) {
+        if (canSendReports && !self.options.dontSendReportsAtStartUp)
+        {
             [SentryCrashIntegration sendAllSentryCrashReports];
         }
     };
@@ -164,6 +165,11 @@ static NSString *const LOCALE_KEY = @"locale";
 + (void)sendAllSentryCrashReports
 {
     [installation sendAllReportsWithCompletion:NULL];
+}
+
++ (void)sendAllSentryCrashReportsWithCompletion:(nullable SentryCrashReportFilterCompletion)onCompletion
+{
+    [installation sendAllReportsWithCompletion:onCompletion];
 }
 
 - (void)uninstall

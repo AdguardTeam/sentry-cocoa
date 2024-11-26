@@ -26,18 +26,7 @@
 //
 
 #import <Foundation/Foundation.h>
-
-/** Callback for filter operations.
- *
- * @param filteredReports The filtered reports (may be incomplete if "completed"
- *                        is false).
- * @param completed True if filtering completed.
- *                  Can be false due to a non-erroneous condition (such as a
- *                  user cancelling the operation).
- * @param error Non-nil if an error occurred.
- */
-typedef void (^SentryCrashReportFilterCompletion)(
-    NSArray *filteredReports, BOOL completed, NSError *error);
+#import "Sentry/SentryDefines.h"
 
 /**
  * A filter receives a set of reports, possibly transforms them, and then

@@ -59,6 +59,10 @@ SENTRY_NO_INIT
 + (void)startWithConfigureOptions:(void (^)(SentryOptions *options))configureOptions
     NS_SWIFT_NAME(start(configureOptions:));
 
+
++ (void) setLogOutput: (id <SentryLogOutputProtocol> _Nonnull) output;
++ (void)sendAllSentryCrashReportsWithCompletion:(nullable SentryCrashReportFilterCompletion)onCompletion;
+
 /**
  * Captures a manually created event and sends it to Sentry.
  * @param event The event to send to Sentry.
