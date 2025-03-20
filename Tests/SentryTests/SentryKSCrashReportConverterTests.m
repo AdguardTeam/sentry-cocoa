@@ -306,7 +306,7 @@
 - (void)testFatalErrorBinaryiPhone
 {
     [self testFatalErrorBinary:@"Resources/fatal-error-binary-images-iphone"
-                 expectedValue:@"iOS_Swift/ViewController.swift:53: Fatal error: Hello fatal\n"];
+                 expectedValue:@"iOS_Swift/ViewController.swift:53: FatalX error: Hello fatal\n"];
 }
 
 - (void)testFatalErrorBinaryMac
@@ -318,13 +318,13 @@
 - (void)testFatalErrorBinarySimulator
 {
     [self testFatalErrorBinary:@"Resources/fatal-error-binary-images-simulator"
-                 expectedValue:@"iOS_Swift/ViewController.swift:53: Fatal error: Hello fatal\n"];
+                 expectedValue:@"iOS_Swift/ViewController.swift:53: FatalX error: Hello fatal\n"];
 }
 
 - (void)testFatalErrorBinaryMessage2
 {
     [self testFatalErrorBinary:@"Resources/fatal-error-binary-images-message2"
-                 expectedValue:@"iOS_Swift/ViewController.swift:53: Fatal error: Hello fatal\n"];
+                 expectedValue:@"iOS_Swift/ViewController.swift:53: FatalX error: Hello fatal\n"];
 }
 
 - (void)testFatalErrorBinary:(NSString *)reportPath expectedValue:(NSString *)expectedValue
@@ -363,6 +363,81 @@
     [self compareDict:serializedUser withDict:[event.user serialize]];
     XCTAssertEqual(event.tags.count, (unsigned long)2);
     XCTAssertEqual(event.extra.count, (unsigned long)3);
+}
+
+- (void)testTraceContext
+{
+    [self isValidReport:@"Resources/fatal-error-notable-addresses"];
+    NSDictionary *rawCrash = [self getCrashReport:@"Resources/fatal-error-notable-addresses"];
+    SentryCrashReportConverter *reportConverter =
+        [[SentryCrashReportConverter alloc] initWithReport:rawCrash inAppLogic:self.inAppLogic];
+    reportConverter.userContext = @{
+        @"context" : @ { @"some" : @"context" },
+        @"traceContext" : @ { @"trace_id" : @"1234567890", @"span_id" : @"1234567890" }
+    };
+    SentryEvent *event = [reportConverter convertReportToEvent];
+    NSDictionary *expectedContext = @{
+        @"some" : @"context",
+        @"trace" : @ { @"trace_id" : @"1234567890", @"span_id" : @"1234567890" },
+        @"app" : @ { @"in_foreground" : @(YES) }
+    };
+    [self compareDict:expectedContext withDict:event.context];
+    XCTAssertNil(event.context[@"traceContext"]);
+}
+
+- (void)testAppContextInForegroundTrue_IsTrue
+{
+    [self isValidReport:@"Resources/fatal-error-notable-addresses"];
+    NSDictionary *rawCrash = [self getCrashReport:@"Resources/fatal-error-notable-addresses"];
+    SentryCrashReportConverter *reportConverter =
+        [[SentryCrashReportConverter alloc] initWithReport:rawCrash inAppLogic:self.inAppLogic];
+
+    SentryEvent *event = [reportConverter convertReportToEvent];
+    NSDictionary *expectedContext = @{ @"app" : @ { @"in_foreground" : @(YES) } };
+    [self compareDict:expectedContext withDict:event.context];
+}
+
+- (void)testAppContextInForegroundFalse_IsFalse
+{
+    NSMutableDictionary *rawCrash =
+        [self getCrashReport:@"Resources/fatal-error-binary-images-simulator"].mutableCopy;
+
+    NSMutableDictionary *systemDict =
+        [[NSMutableDictionary alloc] initWithDictionary:rawCrash[@"system"]];
+    NSMutableDictionary *applicationStats =
+        [[NSMutableDictionary alloc] initWithDictionary:systemDict[@"application_stats"]];
+    applicationStats[@"application_in_foreground"] = @(NO);
+    systemDict[@"application_stats"] = applicationStats;
+    rawCrash[@"system"] = systemDict;
+
+    SentryCrashReportConverter *reportConverter =
+        [[SentryCrashReportConverter alloc] initWithReport:rawCrash inAppLogic:self.inAppLogic];
+
+    SentryEvent *event = [reportConverter convertReportToEvent];
+
+    XCTAssertEqual(event.context[@"app"][@"in_foreground"], @(NO));
+}
+
+- (void)testAppContextInForegroundNil_IsNil
+{
+    [self isValidReport:@"Resources/fatal-error-binary-images-simulator"];
+    NSMutableDictionary *rawCrash =
+        [self getCrashReport:@"Resources/fatal-error-binary-images-simulator"].mutableCopy;
+
+    NSMutableDictionary *systemDict =
+        [[NSMutableDictionary alloc] initWithDictionary:rawCrash[@"system"]];
+    NSMutableDictionary *applicationStats =
+        [[NSMutableDictionary alloc] initWithDictionary:systemDict[@"application_stats"]];
+    applicationStats[@"application_in_foreground"] = nil;
+    systemDict[@"application_stats"] = applicationStats;
+    rawCrash[@"system"] = systemDict;
+
+    SentryCrashReportConverter *reportConverter =
+        [[SentryCrashReportConverter alloc] initWithReport:rawCrash inAppLogic:self.inAppLogic];
+
+    SentryEvent *event = [reportConverter convertReportToEvent];
+
+    XCTAssertNil(event.context[@"app"][@"in_foreground"]);
 }
 
 /**

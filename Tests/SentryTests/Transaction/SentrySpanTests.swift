@@ -474,7 +474,6 @@ class SentrySpanTests: XCTestCase {
         XCTAssertEqual(serialization["timestamp"] as? TimeInterval, TestData.timestamp.timeIntervalSince1970)
         XCTAssertEqual(serialization["start_timestamp"] as? TimeInterval, TestData.timestamp.timeIntervalSince1970)
         XCTAssertEqual(serialization["type"] as? String, SENTRY_TRACE_TYPE)
-        XCTAssertEqual(serialization["sampled"] as? NSNumber, true)
         XCTAssertNotNil(serialization["data"])
         XCTAssertNotNil(serialization["tags"])
         
@@ -532,33 +531,6 @@ class SentrySpanTests: XCTestCase {
         let serialization = span.serialize()
         XCTAssertEqual(2, (serialization["data"] as? [String: Any])?.count, "Only expected thread.name and thread.id in data.")
         XCTAssertNil(serialization["tag"])
-    }
-    
-    func testInit_DoesNotInitializeLocalMetricAggregator() {
-        let sut = fixture.getSut()
-        
-        let serialized = sut.serialize()
-        XCTAssertNil(serialized["_metrics_summary"])
-    }
-    
-    func testLocalMetricsAggregator_GetsSerializedAsMetricsSummary() throws {
-        let sut = fixture.getSutWithTracer()
-        
-        let aggregator = sut.getLocalMetricsAggregator()
-        aggregator.add(type: .counter, key: "key", value: 1.0, unit: .none, tags: [:])
-        
-        let serialized = sut.serialize()
-        
-        let metricsSummary = try XCTUnwrap(serialized["_metrics_summary"] as? [String: [[String: Any]]])
-        XCTAssertEqual(metricsSummary.count, 1)
-        
-        let bucket = try XCTUnwrap(metricsSummary["c:key"])
-        XCTAssertEqual(bucket.count, 1)
-        let metric = try XCTUnwrap(bucket.first)
-        XCTAssertEqual(metric["min"] as? Double, 1.0)
-        XCTAssertEqual(metric["max"] as? Double, 1.0)
-        XCTAssertEqual(metric["count"] as? Int, 1)
-        XCTAssertEqual(metric["sum"] as? Double, 1.0)
     }
     
     func testTraceHeaderNotSampled() {
@@ -762,7 +734,7 @@ class SentrySpanTests: XCTestCase {
         XCTAssertNil(sut.data["frames.delay"])
     }
     
-    func givenFramesTracker() -> (TestDisplayLinkWrapper, SentryFramesTracker) {
+    private func givenFramesTracker() -> (TestDisplayLinkWrapper, SentryFramesTracker) {
         let displayLinkWrapper = TestDisplayLinkWrapper(dateProvider: self.fixture.currentDateProvider)
         let framesTracker = SentryFramesTracker(displayLinkWrapper: displayLinkWrapper, dateProvider: self.fixture.currentDateProvider, dispatchQueueWrapper: TestSentryDispatchQueueWrapper(), notificationCenter: TestNSNotificationCenterWrapper(), keepDelayedFramesDuration: 10)
         framesTracker.start()

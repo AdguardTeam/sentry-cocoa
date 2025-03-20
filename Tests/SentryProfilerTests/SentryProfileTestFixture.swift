@@ -13,7 +13,7 @@ class SentryProfileTestFixture {
     }
     
     private static let dsnAsString = TestConstants.dsnAsString(username: "SentryProfileTestFixture")
-    
+
     let options: Options
     let client: TestClient?
     let hub: SentryHub
@@ -21,12 +21,14 @@ class SentryProfileTestFixture {
     let message = "some message"
     let transactionName = "Some Transaction"
     let transactionOperation = "Some Operation"
-    
+
+    let fixedRandomValue = 0.5
+
     let systemWrapper = TestSentrySystemWrapper()
     let processInfoWrapper = TestSentryNSProcessInfoWrapper()
     let dispatchFactory = TestDispatchFactory()
     var metricTimerFactory: TestDispatchSourceWrapper?
-    let timeoutTimerFactory = TestSentryNSTimerFactory()
+    var timeoutTimerFactory: TestSentryNSTimerFactory
     let dispatchQueueWrapper = TestSentryDispatchQueueWrapper()
     let notificationCenter = TestNSNotificationCenterWrapper()
     
@@ -40,12 +42,27 @@ class SentryProfileTestFixture {
     init() {
         SentryDependencyContainer.sharedInstance().dispatchQueueWrapper = dispatchQueueWrapper
         SentryDependencyContainer.sharedInstance().dateProvider = currentDateProvider
-        SentryDependencyContainer.sharedInstance().random = TestRandom(value: 0.5)
+        SentryDependencyContainer.sharedInstance().random = TestRandom(value: fixedRandomValue)
         SentryDependencyContainer.sharedInstance().systemWrapper = systemWrapper
         SentryDependencyContainer.sharedInstance().processInfoWrapper = processInfoWrapper
         SentryDependencyContainer.sharedInstance().dispatchFactory = dispatchFactory
-        SentryDependencyContainer.sharedInstance().timerFactory = timeoutTimerFactory
         SentryDependencyContainer.sharedInstance().notificationCenterWrapper = notificationCenter
+
+        timeoutTimerFactory = TestSentryNSTimerFactory(currentDateProvider: self.currentDateProvider)
+        SentryDependencyContainer.sharedInstance().timerFactory = timeoutTimerFactory
+        
+        let image = DebugMeta()
+        image.name = "sentrytest"
+        image.imageAddress = "0x0000000105705000"
+        image.imageVmAddress = "0x0000000105705000"
+        image.codeFile = "codeFile"
+        image.debugID = "debugID"
+        image.imageSize = 100
+        image.type = "macho"
+        
+        let debugImageProvider = TestDebugImageProvider()
+        debugImageProvider.debugImages = [image]
+        SentryDependencyContainer.sharedInstance().debugImageProvider = debugImageProvider
         
         mockMetrics = MockMetric()
         systemWrapper.overrides.cpuUsage = mockMetrics.cpuUsage
@@ -78,8 +95,8 @@ class SentryProfileTestFixture {
     }
     
     /// Advance the mock date provider, start a new transaction and return its handle.
-    func newTransaction(testingAppLaunchSpans: Bool = false, automaticTransaction: Bool = false, idleTimeout: TimeInterval? = nil, expectedProfileMetrics: MockMetric = MockMetric()) throws -> SentryTracer {
-        let operation = testingAppLaunchSpans ? SentrySpanOperationUILoad : transactionOperation
+    func newTransaction(testingAppLaunchSpans: Bool = false, automaticTransaction: Bool = false, idleTimeout: TimeInterval? = nil) throws -> SentryTracer {
+        let operation = testingAppLaunchSpans ? SentrySpanOperationUiLoad : transactionOperation
         
         if automaticTransaction {
             return hub.startTransaction(
@@ -91,7 +108,6 @@ class SentryProfileTestFixture {
                         $0.idleTimeout = idleTimeout
                     }
                     $0.waitForChildren = true
-                    $0.timerFactory = self.timeoutTimerFactory
                 }))
         }
         

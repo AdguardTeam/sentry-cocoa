@@ -45,7 +45,7 @@ class SentryTransportAdapterTests: XCTestCase {
             SentryEnvelopeItem(session: session)
         ])
         
-        try assertEnvelope(expected: expectedEnvelope)
+        try assertSentEnvelope(expected: expectedEnvelope)
     }
 
     func testSendFaultyAttachment_FaultyAttachmentGetsDropped() throws {
@@ -57,25 +57,48 @@ class SentryTransportAdapterTests: XCTestCase {
             SentryEnvelopeItem(attachment: fixture.attachment, maxAttachmentSize: fixture.options.maxAttachmentSize)!
         ])
         
-        try assertEnvelope(expected: expectedEnvelope)
+        try assertSentEnvelope(expected: expectedEnvelope)
     }
     
+    @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback. This test case can be removed when SentryUserFeedback is removed.")
     func testSendUserFeedback_SendsUserFeedbackEnvelope() throws {
         let userFeedback = TestData.userFeedback
         sut.send(userFeedback: userFeedback)
         
         let expectedEnvelope = SentryEnvelope(userFeedback: userFeedback)
         
-        try assertEnvelope(expected: expectedEnvelope)
+        try assertSentEnvelope(expected: expectedEnvelope)
     }
     
-    private func assertEnvelope(expected: SentryEnvelope) throws {
+    func testStoreEvent_StoresCorrectEnvelope() throws {
+        let event = TestData.event
+        sut.store(event, traceContext: nil)
+        
+        let expectedEnvelope = SentryEnvelope(id: event.eventId, items: [
+            SentryEnvelopeItem(event: event)
+        ])
+        
+        try assertStoredEnvelope(expected: expectedEnvelope)
+    }
+    
+    private func assertStoredEnvelope(expected: SentryEnvelope) throws {
+        XCTAssertEqual(self.fixture.transport1.storedEnvelopes.count, 1)
+        XCTAssertEqual(self.fixture.transport2.storedEnvelopes.count, 1)
+        
+        let actual = try XCTUnwrap(fixture.transport1.storedEnvelopes.first)
+        try assertEnvelope(expected: expected, actual: actual)
+    }
+    
+    private func assertSentEnvelope(expected: SentryEnvelope) throws {
         XCTAssertEqual(self.fixture.transport1.sentEnvelopes.count, 1)
         XCTAssertEqual(self.fixture.transport2.sentEnvelopes.count, 1)
         
-        let actual = fixture.transport1.sentEnvelopes.first!
-        XCTAssertNotNil(actual)
+        let actual = try XCTUnwrap(fixture.transport1.sentEnvelopes.first)
         
+        try assertEnvelope(expected: expected, actual: actual)
+    }
+    
+    private func assertEnvelope(expected: SentryEnvelope, actual: SentryEnvelope) throws {
         XCTAssertEqual(expected.header.eventId, actual.header.eventId)
         XCTAssertEqual(expected.header.sdkInfo, actual.header.sdkInfo)
         XCTAssertEqual(expected.items.count, actual.items.count)
@@ -98,5 +121,6 @@ class SentryTransportAdapterTests: XCTestCase {
         
         let actualSerialized = try XCTUnwrap(SentrySerialization.data(with: actual))
         XCTAssertEqual(try XCTUnwrap(SentrySerialization.data(with: expected)), actualSerialized)
+    
     }
 }

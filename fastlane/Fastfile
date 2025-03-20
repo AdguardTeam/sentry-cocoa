@@ -21,7 +21,7 @@ platform :ios do
       )
     new_version = version.split("-", -1)[0]
 
-    # We also need to replace the MARKETING_VERSION otherwise the build will fail with 
+    # We also need to replace the MARKETING_VERSION otherwise the build will fail with
     # error: The CFBundleShortVersionString of an App Clip ('8.9.0-beta.1') must match that of its containing parent app ('8.9.0').
     sh "sed -i '' 's/MARKETING_VERSION = #{version}/MARKETING_VERSION = #{new_version}/g' ../Samples/iOS-Swift/iOS-Swift.xcodeproj/project.pbxproj"
 
@@ -83,10 +83,18 @@ platform :ios do
     sync_code_signing(
       type: "appstore",
       readonly: true,
-      app_identifier: ["io.sentry.sample.iOS-Swift",  "io.sentry.sample.iOS-Swift.Clip"]
+      app_identifier: ["io.sentry.sample.iOS-Swift",  "io.sentry.sample.iOS-Swift.Clip"],
+      
+      # Directly cloning the branch instead of using a shallow clone fixes the rare error:
+      #   fatal: a branch named 'master' already exists in GitHub Action workflows.
+      git_branch: "master",
+      clone_branch_directly: true
     )
 
-    build_app(
+    # We must use build_ios_app because otherwise the build will succeed but it will not create the .ipa file. 
+    # The log output will print a warning: "No output path received from gym"
+    # See: https://github.com/fastlane/fastlane/issues/22276#issuecomment-2491517911
+    build_ios_app(
       workspace: "Sentry.xcworkspace",
       scheme: "iOS-Swift",
       include_bitcode: false,
@@ -107,7 +115,12 @@ platform :ios do
     sync_code_signing(
       type: "development",
       readonly: true,
-      app_identifier: ["io.sentry.sample.iOS-Swift", "io.sentry.sample.iOS-Swift.Clip"]
+      app_identifier: ["io.sentry.sample.iOS-Swift", "io.sentry.sample.iOS-Swift.Clip"],
+      
+      # Directly cloning the branch instead of using a shallow clone fixes the rare error:
+      #   fatal: a branch named 'master' already exists in GitHub Action workflows.
+      git_branch: "master",
+      clone_branch_directly: true
     )
 
     build_app(
@@ -129,11 +142,16 @@ platform :ios do
     sync_code_signing(
       type: "development",
       readonly: true,
-      app_identifier: ["io.sentry.sample.iOS-Swift", "io.sentry.sample.iOS-Swift.Clip", "io.sentry.iOS-Swift-UITests.xctrunner"]
+      app_identifier: ["io.sentry.sample.iOS-Swift", "io.sentry.sample.iOS-Swift.Clip", "io.sentry.iOS-Swift-UITests.xctrunner"],
+      
+      # Directly cloning the branch instead of using a shallow clone fixes the rare error:
+      #   fatal: a branch named 'master' already exists in GitHub Action workflows.
+      git_branch: "master",
+      clone_branch_directly: true
     )
 
     # don't use gym here because it always appends a "build" command which fails, since this is a test target not configured for running
-    sh "set -o pipefail && xcodebuild -workspace ../Sentry.xcworkspace -scheme iOS-Swift-UITests -derivedDataPath ../DerivedData -destination 'generic/platform=iOS' -configuration Test build-for-testing | xcpretty"
+    sh "set -o pipefail && NSUnbufferedIO=YES xcodebuild -workspace ../Sentry.xcworkspace -scheme iOS-Swift-UITests -derivedDataPath ../DerivedData -destination 'generic/platform=iOS' -configuration Test build-for-testing 2>&1 | xcbeautify"
 
     delete_keychain(name: "fastlane_tmp_keychain") unless is_ci
   end
@@ -147,7 +165,13 @@ platform :ios do
     sync_code_signing(
       type: "development",
       readonly: true,
-      app_identifier: ["io.sentry.sample.iOS-Swift", "io.sentry.sample.iOS-Swift.Clip", "io.sentry.iOS-Benchmarking.xctrunner"]
+      app_identifier: ["io.sentry.sample.iOS-Swift", "io.sentry.sample.iOS-Swift.Clip", "io.sentry.iOS-Benchmarking.xctrunner"],
+      
+      
+      # Directly cloning the branch instead of using a shallow clone fixes the rare error:
+      #   fatal: a branch named 'master' already exists in GitHub Action workflows.
+      git_branch: "master",
+      clone_branch_directly: true
     )
 
     build_app(
@@ -159,6 +183,23 @@ platform :ios do
     )
 
     delete_keychain(name: "fastlane_tmp_keychain") unless is_ci
+  end
+
+  lane :build_ios_swift_ui_test_sample do
+
+    setup_ci(
+      force: true
+    )
+
+    build_app(
+      workspace: "Sentry.xcworkspace",
+      scheme: "SwiftUITestSample",
+      configuration: "Debug",
+      derived_data_path: "TestSamples/SwiftUITestSample/DerivedData",
+      destination: "generic/platform=iOS Simulator",
+      xcargs: "-sdk 'iphonesimulator'",
+      skip_archive: true
+    )
   end
 
   desc "Upload iOS-Swift to TestFlight and symbols to Sentry"
@@ -183,36 +224,88 @@ platform :ios do
   end
 
   lane :ui_tests_ios_swiftui do
+    # FileUtils resolves relative paths to the `fastlane` directory, while lanes resolve relative to root.
+    result_bundle_path = "test_results/ui-tests-ios-swiftui.xcresult"
+    FileUtils.rm_r(result_bundle_path) if File.exist?(result_bundle_path)
     run_tests(
       workspace: "Sentry.xcworkspace",
       scheme: "iOS-SwiftUI",
-      configuration: configuration
+      configuration: configuration,
+      xcodebuild_formatter: "xcbeautify --report junit",
+      result_bundle: true,
+      result_bundle_path: "fastlane/#{result_bundle_path}"
+    )
+  end
+  
+  lane :ui_tests_ios_swift6 do |options|
+    # FileUtils resolves relative paths to the `fastlane` directory, while lanes resolve relative to root.
+    result_bundle_path = "test_results/ui-tests-ios-swift6.xcresult"
+    FileUtils.rm_r(result_bundle_path) if File.exist?(result_bundle_path)
+    run_tests(
+      workspace: "Sentry.xcworkspace",
+      scheme: "iOS-Swift6",
+      configuration: configuration,
+      xcodebuild_formatter: "xcbeautify --report junit",
+      result_bundle: true,
+      result_bundle_path: "fastlane/#{result_bundle_path}"
     )
   end
 
   lane :ui_tests_ios_objc do
+    # FileUtils resolves relative paths to the `fastlane` directory, while lanes resolve relative to root.
+    result_bundle_path = "test_results/ui-tests-ios-objc.xcresult"
+    FileUtils.rm_r(result_bundle_path) if File.exist?(result_bundle_path)
     run_tests(
       workspace: "Sentry.xcworkspace",
       scheme: "iOS-ObjectiveC",
-      configuration: configuration
+      configuration: configuration,
+      xcodebuild_formatter: "xcbeautify --report junit",
+      result_bundle: true,
+      result_bundle_path: "fastlane/#{result_bundle_path}"
     )
   end
 
   lane :ui_tests_ios_swift do |options|
+    # FileUtils resolves relative paths to the `fastlane` directory, while lanes resolve relative to root.
+    result_bundle_path = "test_results/ui-tests-ios-swift.xcresult"
+    FileUtils.rm_r(result_bundle_path) if File.exist?(result_bundle_path)
     run_tests(
       workspace: "Sentry.xcworkspace",
       scheme: "iOS-Swift",
       device: options[:device],
       address_sanitizer: options[:address_sanitizer],
-      configuration: configuration
+      configuration: configuration,
+      xcodebuild_formatter: "xcbeautify --report junit",
+      result_bundle: true,
+      result_bundle_path: "fastlane/#{result_bundle_path}"
     )
   end
 
   lane :ui_tests_tvos_swift do
+    # FileUtils resolves relative paths to the `fastlane` directory, while lanes resolve relative to root.
+    result_bundle_path = "test_results/ui-tests-tvos-swift.xcresult"
+    FileUtils.rm_r(result_bundle_path) if File.exist?(result_bundle_path)
     run_tests(
       workspace: "Sentry.xcworkspace",
       scheme: "tvOS-Swift",
-      configuration: configuration
+      configuration: configuration,
+      xcodebuild_formatter: "xcbeautify --report junit",
+      result_bundle: true,
+      result_bundle_path: "fastlane/#{result_bundle_path}"
+    )
+  end
+  
+  desc "Run Duplication test"
+  lane :duplication_test do
+    # FileUtils resolves relative paths to the `fastlane` directory, while lanes resolve relative to root.
+    result_bundle_path = "test_results/duplication-test.xcresult"
+    FileUtils.rm_r(result_bundle_path) if File.exist?(result_bundle_path)
+    run_tests(
+      project: "./Tests/DuplicatedSDKTest/DuplicatedSDKTest.xcodeproj",
+      scheme: "DuplicatedSDKTest",
+      xcodebuild_formatter: "xcbeautify --report junit",
+      result_bundle: true,
+      result_bundle_path: "fastlane/#{result_bundle_path}"
     )
   end
 
@@ -225,7 +318,12 @@ platform :ios do
     sync_code_signing(
       type: "development",
       readonly: true,
-      app_identifier: ["io.sentry.cocoa.perf-test-app-plain"]
+      app_identifier: ["io.sentry.cocoa.perf-test-app-plain"],
+      
+      # Directly cloning the branch instead of using a shallow clone fixes the rare error:
+      #   fatal: a branch named 'master' already exists in GitHub Action workflows.
+      git_branch: "master",
+      clone_branch_directly: true
     )
 
     build_app(
@@ -250,7 +348,12 @@ platform :ios do
     sync_code_signing(
       type: "development",
       readonly: true,
-      app_identifier: ["io.sentry.cocoa.perf-test-app-sentry"]
+      app_identifier: ["io.sentry.cocoa.perf-test-app-sentry"],
+      
+      # Directly cloning the branch instead of using a shallow clone fixes the rare error:
+      #   fatal: a branch named 'master' already exists in GitHub Action workflows.
+      git_branch: "master",
+      clone_branch_directly: true
     )
 
     build_app(

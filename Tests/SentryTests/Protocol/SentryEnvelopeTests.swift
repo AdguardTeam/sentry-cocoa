@@ -6,7 +6,8 @@ class SentryEnvelopeTests: XCTestCase {
     
     private class Fixture {
         let sdkVersion = "sdkVersion"
-        let userFeedback: UserFeedback
+        @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback.")
+        let userFeedback: UserFeedback = TestData.userFeedback
         let path = "test.log"
         let data = "hello".data(using: .utf8)
         
@@ -15,11 +16,6 @@ class SentryEnvelopeTests: XCTestCase {
         let dataTooBig: Data
         
         init() {
-            userFeedback = UserFeedback(eventId: SentryId())
-            userFeedback.comments = "It doesn't work!"
-            userFeedback.email = "john@me.com"
-            userFeedback.name = "John Me"
-            
             dataAllowed = Data([UInt8](repeating: 1, count: Int(maxAttachmentSize)))
             dataTooBig = Data([UInt8](repeating: 1, count: Int(maxAttachmentSize) + 1))
         }
@@ -49,7 +45,7 @@ class SentryEnvelopeTests: XCTestCase {
             return event
         }
     }
-
+    
     private let fixture = Fixture()
 
     override func setUp() {
@@ -66,8 +62,8 @@ class SentryEnvelopeTests: XCTestCase {
         clearTestState()
     }
 
-    private let defaultSdkInfo = SentrySdkInfo(name: SentryMeta.sdkName, andVersion: SentryMeta.versionString)
-    
+    private let defaultSdkInfo = SentrySdkInfo(name: SentryMeta.sdkName, version: SentryMeta.versionString, integrations: [], features: [], packages: [])
+
     func testSentryEnvelopeFromEvent() throws {
         let event = Event()
         
@@ -147,7 +143,7 @@ class SentryEnvelopeTests: XCTestCase {
     
     func testInitSentryEnvelopeHeader_SetIdAndSdkInfo() {
         let eventId = SentryId()
-        let sdkInfo = SentrySdkInfo(name: "sdk", andVersion: "1.2.3-alpha.0")
+        let sdkInfo = SentrySdkInfo(name: "sdk", version: "1.2.3-alpha.0", integrations: [], features: [], packages: [])
         
         let envelopeHeader = SentryEnvelopeHeader(id: eventId, sdkInfo: sdkInfo, traceContext: nil)
         XCTAssertEqual(eventId, envelopeHeader.eventId)
@@ -206,6 +202,7 @@ class SentryEnvelopeTests: XCTestCase {
         }
     }
     
+    @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback. This test case can be removed when SentryUserFeedback is removed.")
     func testInitWithUserFeedback() throws {
         let userFeedback = fixture.userFeedback
         

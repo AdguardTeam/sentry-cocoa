@@ -87,6 +87,13 @@
         infoDict[@"CFBundleShortVersionString"], infoDict[@"CFBundleVersion"]];
 }
 
+#if TARGET_OS_OSX
+- (void)testEnableReportingUncaughtNSExceptions
+{
+    [self testBooleanField:@"enableUncaughtNSExceptionReporting" defaultValue:NO];
+}
+#endif // TARGET_OS_OSX
+
 - (void)testEnvironment
 {
     SentryOptions *options = [self getValidOptions:@{}];
@@ -616,7 +623,7 @@
 #if SENTRY_HAS_UIKIT
         @"enableUIViewControllerTracing" : [NSNull null],
         @"attachScreenshot" : [NSNull null],
-        @"sessionReplayOptions" : [NSNull null],
+        @"sessionReplay" : [NSNull null],
 #endif // SENTRY_HAS_UIKIT
         @"enableAppHangTracking" : [NSNull null],
         @"appHangTimeoutInterval" : [NSNull null],
@@ -682,8 +689,8 @@
     XCTAssertEqual(options.enablePreWarmedAppStartTracing, NO);
     XCTAssertEqual(options.attachViewHierarchy, NO);
     XCTAssertEqual(options.reportAccessibilityIdentifier, YES);
-    XCTAssertEqual(options.experimental.sessionReplay.onErrorSampleRate, 0);
-    XCTAssertEqual(options.experimental.sessionReplay.sessionSampleRate, 0);
+    XCTAssertEqual(options.sessionReplay.onErrorSampleRate, 0);
+    XCTAssertEqual(options.sessionReplay.sessionSampleRate, 0);
 #endif // SENTRY_HAS_UIKIT
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -823,6 +830,11 @@
     [self testBooleanField:@"enablePerformanceV2" defaultValue:NO];
 }
 
+- (void)testEnablePersistingTracesWhenCrashing
+{
+    [self testBooleanField:@"enablePersistingTracesWhenCrashing" defaultValue:NO];
+}
+
 #if SENTRY_HAS_UIKIT
 - (void)testEnableUIViewControllerTracing
 {
@@ -875,11 +887,10 @@
 {
     if (@available(iOS 16.0, tvOS 16.0, *)) {
         SentryOptions *options = [self getValidOptions:@{
-            @"experimental" :
-                @ { @"sessionReplay" : @ { @"sessionSampleRate" : @2, @"errorSampleRate" : @4 } }
+            @"sessionReplay" : @ { @"sessionSampleRate" : @2, @"errorSampleRate" : @4 }
         }];
-        XCTAssertEqual(options.experimental.sessionReplay.sessionSampleRate, 2);
-        XCTAssertEqual(options.experimental.sessionReplay.onErrorSampleRate, 4);
+        XCTAssertEqual(options.sessionReplay.sessionSampleRate, 2);
+        XCTAssertEqual(options.sessionReplay.onErrorSampleRate, 4);
     }
 }
 
@@ -887,8 +898,8 @@
 {
     if (@available(iOS 16.0, tvOS 16.0, *)) {
         SentryOptions *options = [self getValidOptions:@{ @"sessionReplayOptions" : @ {} }];
-        XCTAssertEqual(options.experimental.sessionReplay.sessionSampleRate, 0);
-        XCTAssertEqual(options.experimental.sessionReplay.onErrorSampleRate, 0);
+        XCTAssertEqual(options.sessionReplay.sessionSampleRate, 0);
+        XCTAssertEqual(options.sessionReplay.onErrorSampleRate, 0);
     }
 }
 
@@ -916,10 +927,19 @@
     [self testBooleanField:@"enableAppHangTracking" defaultValue:YES];
 }
 
+#if SENTRY_UIKIT_AVAILABLE
+
 - (void)testEnableAppHangTrackingV2
 {
     [self testBooleanField:@"enableAppHangTrackingV2" defaultValue:NO];
 }
+
+- (void)testEnableReportNonFullyBlockingAppHangs
+{
+    [self testBooleanField:@"enableReportNonFullyBlockingAppHangs" defaultValue:YES];
+}
+
+#endif // SENTRY_UIKIT_AVAILABLE
 
 - (void)testDefaultAppHangsTimeout
 {
@@ -1493,42 +1513,6 @@
 
     SentryOptions *options3 = [self getValidOptions:@{ @"spotlightUrl" : @2 }];
     XCTAssertEqualObjects(options3.spotlightUrl, @"http://localhost:8969/stream");
-}
-
-- (void)testEnableMetrics
-{
-    [self testBooleanField:@"enableMetrics" defaultValue:NO];
-}
-
-- (void)testEnableDefaultTagsForMetrics
-{
-    [self testBooleanField:@"enableDefaultTagsForMetrics" defaultValue:YES];
-}
-
-- (void)testEnableSpanLocalMetricAggregation
-{
-    [self testBooleanField:@"enableSpanLocalMetricAggregation" defaultValue:YES];
-}
-
-- (void)testBeforeEmitMetric
-{
-    SentryBeforeEmitMetricCallback callback
-        = ^(NSString *_Nonnull key, NSDictionary<NSString *, NSString *> *_Nonnull tags) {
-              // Use tags and key to silence unused compiler error
-              XCTAssertNotNil(key);
-              XCTAssertNotNil(tags);
-              return YES;
-          };
-    SentryOptions *options = [self getValidOptions:@{ @"beforeEmitMetric" : callback }];
-
-    XCTAssertEqual(callback, options.beforeEmitMetric);
-}
-
-- (void)testDefaultBeforeEmitMetric
-{
-    SentryOptions *options = [self getValidOptions:@{}];
-
-    XCTAssertNil(options.beforeEmitMetric);
 }
 
 #pragma mark - Private

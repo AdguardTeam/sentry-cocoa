@@ -114,7 +114,7 @@ class SentryCrashStackEntryMapperTests: XCTestCase {
         return result
     }
 
-    func createCrashBinaryImage(_ address: UInt) -> SentryCrashBinaryImage {
+    private func createCrashBinaryImage(_ address: UInt) -> SentryCrashBinaryImage {
         let name = "Expected Name at \(address)"
         let nameCString = name.withCString { strdup($0) }
 
@@ -126,9 +126,6 @@ class SentryCrashStackEntryMapperTests: XCTestCase {
             uuid: nil,
             cpuType: 1,
             cpuSubType: 1,
-            majorVersion: 1,
-            minorVersion: 0,
-            revisionVersion: 0,
             crashInfoMessage: nil,
             crashInfoMessage2: nil
         )

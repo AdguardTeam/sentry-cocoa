@@ -13,7 +13,6 @@
 #import "SentryRetryAfterHeaderParser.h"
 #import "SentrySpotlightTransport.h"
 #import "SentryTransport.h"
-#import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -25,7 +24,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (NSArray<id<SentryTransport>> *)initTransports:(SentryOptions *)options
                                sentryFileManager:(SentryFileManager *)sentryFileManager
-                             currentDateProvider:(SentryCurrentDateProvider *)currentDateProvider
+                                      rateLimits:(id<SentryRateLimits>)rateLimits
 {
     NSURLSession *session;
 
@@ -42,24 +41,13 @@ NS_ASSUME_NONNULL_BEGIN
     id<SentryRequestManager> requestManager =
         [[SentryQueueableRequestManager alloc] initWithSession:session];
 
-    SentryHttpDateParser *httpDateParser = [[SentryHttpDateParser alloc] init];
-    SentryRetryAfterHeaderParser *retryAfterHeaderParser =
-        [[SentryRetryAfterHeaderParser alloc] initWithHttpDateParser:httpDateParser
-                                                 currentDateProvider:currentDateProvider];
-    SentryRateLimitParser *rateLimitParser =
-        [[SentryRateLimitParser alloc] initWithCurrentDateProvider:currentDateProvider];
-    id<SentryRateLimits> rateLimits =
-        [[SentryDefaultRateLimits alloc] initWithRetryAfterHeaderParser:retryAfterHeaderParser
-                                                     andRateLimitParser:rateLimitParser
-                                                    currentDateProvider:currentDateProvider];
-
     SentryEnvelopeRateLimit *envelopeRateLimit =
         [[SentryEnvelopeRateLimit alloc] initWithRateLimits:rateLimits];
 
     dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(
         DISPATCH_QUEUE_SERIAL, DISPATCH_QUEUE_PRIORITY_LOW, 0);
     SentryDispatchQueueWrapper *dispatchQueueWrapper =
-        [[SentryDispatchQueueWrapper alloc] initWithName:"sentry-http-transport"
+        [[SentryDispatchQueueWrapper alloc] initWithName:"io.sentry.http-transport"
                                               attributes:attributes];
 
     SentryNSURLRequestBuilder *requestBuilder = [[SentryNSURLRequestBuilder alloc] init];

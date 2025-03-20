@@ -20,6 +20,7 @@ class SentryHubTests: XCTestCase {
         let sentryCrashWrapper = TestSentryCrashWrapper.sharedInstance()
         let fileManager: SentryFileManager
         let crashedSession: SentrySession
+        let abnormalSession: SentrySession
         let transactionName = "Some Transaction"
         let transactionOperation = "Some Operation"
         let traceOrigin = "auto"
@@ -44,6 +45,10 @@ class SentryHubTests: XCTestCase {
             crashedSession = SentrySession(releaseName: "1.0.0", distinctId: "")
             crashedSession.endCrashed(withTimestamp: currentDateProvider.date())
             crashedSession.environment = options.environment
+            
+            abnormalSession = SentrySession(releaseName: "1.0.0", distinctId: "")
+            abnormalSession.endAbnormal(withTimestamp: currentDateProvider.date())
+            abnormalSession.environment = options.environment
         }
         
         func getSut(withMaxBreadcrumbs maxBreadcrumbs: UInt = 100) -> SentryHub {
@@ -66,6 +71,7 @@ class SentryHubTests: XCTestCase {
         fixture = Fixture()
         fixture.fileManager.deleteCurrentSession()
         fixture.fileManager.deleteCrashedSession()
+        fixture.fileManager.deleteAbnormalSession()
         fixture.fileManager.deleteAppState()
         fixture.fileManager.deleteTimestampLastInForeground()
         fixture.fileManager.deleteAllEnvelopes()
@@ -75,6 +81,7 @@ class SentryHubTests: XCTestCase {
         super.tearDown()
         fixture.fileManager.deleteCurrentSession()
         fixture.fileManager.deleteCrashedSession()
+        fixture.fileManager.deleteAbnormalSession()
         fixture.fileManager.deleteAppState()
         fixture.fileManager.deleteTimestampLastInForeground()
         fixture.fileManager.deleteAllEnvelopes()
@@ -370,28 +377,68 @@ class SentryHubTests: XCTestCase {
         XCTAssertEqual(span.sampled, .no)
     }
     
+    @available(*, deprecated, message: "The test is marked as deprecated to silence the deprecation warning of the initializer")
     func testCaptureTransaction_CapturesEventAsync() throws {
         let transaction = sut.startTransaction(transactionContext: TransactionContext(name: fixture.transactionName, operation: fixture.transactionOperation, sampled: .yes))
-        
+
         let trans = Dynamic(transaction).toTransaction().asAnyObject
         sut.capture(try XCTUnwrap(trans as? Transaction), with: Scope())
         
         XCTAssertEqual(self.fixture.client.captureEventWithScopeInvocations.count, 1)
         XCTAssertEqual(self.fixture.dispatchQueueWrapper.dispatchAsyncInvocations.count, 1)
     }
-    
+
+    func testCaptureTransaction_withSampleRateRand_CapturesEventAsync() throws {
+        let transaction = sut.startTransaction(
+            transactionContext: TransactionContext(
+                name: fixture.transactionName,
+                operation: fixture.transactionOperation,
+                sampled: .yes,
+                sampleRate: 0.123456789,
+                sampleRand: 0.987654321
+            )
+        )
+
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        sut.capture(try XCTUnwrap(trans as? Transaction), with: Scope())
+        
+        XCTAssertEqual(self.fixture.client.captureEventWithScopeInvocations.count, 1)
+        XCTAssertEqual(self.fixture.dispatchQueueWrapper.dispatchAsyncInvocations.count, 1)
+    }
+
+    @available(*, deprecated, message: "The test is marked as deprecated to silence the deprecation warning of the initializer")
     func testCaptureSampledTransaction_DoesNotCaptureEvent() throws {
         let transaction = sut.startTransaction(transactionContext: TransactionContext(name: fixture.transactionName, operation: fixture.transactionOperation, sampled: .no))
-        
+
         let trans = Dynamic(transaction).toTransaction().asAnyObject
         sut.capture(try XCTUnwrap(trans as? Transaction), with: Scope())
         
         XCTAssertEqual(self.fixture.client.captureEventWithScopeInvocations.count, 0)
     }
     
+    func testCaptureSampledTransaction_withSampleRateRand_DoesNotCaptureEvent() throws {
+        // Arrange
+        let transaction = sut.startTransaction(
+            transactionContext: TransactionContext(
+                name: fixture.transactionName,
+                operation: fixture.transactionOperation,
+                sampled: .no,
+                sampleRate: 0.123456789,
+                sampleRand: 0.987654321
+            )
+        )
+        // Act
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        sut.capture(try XCTUnwrap(trans as? Transaction), with: Scope())
+        
+        // Assert
+        XCTAssertEqual(self.fixture.client.captureEventWithScopeInvocations.count, 0)
+    }
+    
+    @available(*, deprecated, message: "The test is marked as deprecated to silence the deprecation warning of the initializer")
     func testCaptureSampledTransaction_RecordsLostEvent() throws {
         let transaction = sut.startTransaction(transactionContext: TransactionContext(name: fixture.transactionName, operation: fixture.transactionOperation, sampled: .no))
-        
+
         let trans = Dynamic(transaction).toTransaction().asAnyObject
         sut.capture(try XCTUnwrap(trans as? Transaction), with: Scope())
         
@@ -401,6 +448,29 @@ class SentryHubTests: XCTestCase {
         XCTAssertEqual(.sampleRate, lostEvent?.reason)
     }
     
+    func testCaptureSampledTransaction_withSampleRateRand_RecordsLostEvent() throws {
+        // Arrange
+        let transaction = sut.startTransaction(
+            transactionContext: TransactionContext(
+                name: fixture.transactionName,
+                operation: fixture.transactionOperation,
+                sampled: .no,
+                sampleRate: 0.123456789,
+                sampleRand: 0.987654321
+            )
+        )
+        // Act
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        sut.capture(try XCTUnwrap(trans as? Transaction), with: Scope())
+        
+        // Assert
+        XCTAssertEqual(1, fixture.client.recordLostEvents.count)
+        let lostEvent = fixture.client.recordLostEvents.first
+        XCTAssertEqual(lostEvent?.category, .transaction)
+        XCTAssertEqual(lostEvent?.reason, .sampleRate)
+    }
+    
+    @available(*, deprecated, message: "The test is marked as deprecated to silence the deprecation warning of the initializer")
     func testCaptureSampledTransaction_RecordsLostSpans() throws {
         let transaction = sut.startTransaction(transactionContext: TransactionContext(name: fixture.transactionName, operation: fixture.transactionOperation, sampled: .no))
         let trans = Dynamic(transaction).toTransaction().asAnyObject
@@ -420,6 +490,113 @@ class SentryHubTests: XCTestCase {
         XCTAssertEqual(.span, lostEvent?.category)
         XCTAssertEqual(.sampleRate, lostEvent?.reason)
         XCTAssertEqual(4, lostEvent?.quantity)
+    }
+
+    func testCaptureSampledTransaction_withSampleRateRand_RecordsLostSpans() throws {
+        // Arrange
+        let transaction = sut.startTransaction(
+            transactionContext: TransactionContext(
+                name: fixture.transactionName,
+                operation: fixture.transactionOperation,
+                sampled: .no,
+                sampleRate: 0.123456789,
+                sampleRand: 0.987654321
+            )
+        )
+        // Act
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        
+        if let tracer = transaction as? SentryTracer {
+            (trans as? Transaction)?.spans = [
+                tracer.startChild(operation: "child1"),
+                tracer.startChild(operation: "child2"),
+                tracer.startChild(operation: "child3")
+            ]
+        }
+        
+        sut.capture(try XCTUnwrap(trans as? Transaction), with: Scope())
+        
+        // Assert
+        XCTAssertEqual(1, fixture.client.recordLostEventsWithQauntity.count)
+        let lostEvent = fixture.client.recordLostEventsWithQauntity.first
+        XCTAssertEqual(lostEvent?.category, .span)
+        XCTAssertEqual(lostEvent?.reason, .sampleRate)
+        XCTAssertEqual(lostEvent?.quantity, 4)
+    }
+    
+    @available(*, deprecated, message: "The test is marked as deprecated to silence the deprecation warning of the initializer")
+    func testSaveCrashTransaction_SavesTransaction() throws {
+        let scope = fixture.scope
+        let sut = SentryHub(client: fixture.client, andScope: scope)
+        
+        let transaction = sut.startTransaction(transactionContext: TransactionContext(name: fixture.transactionName, operation: fixture.transactionOperation, sampled: .yes))
+
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        sut.saveCrash(try XCTUnwrap(trans as? Transaction))
+        
+        let client = fixture.client
+        XCTAssertEqual(1, client.saveCrashTransactionInvocations.count)
+        XCTAssertEqual(scope, client.saveCrashTransactionInvocations.first?.scope)
+        XCTAssertEqual(0, client.recordLostEvents.count)
+    }
+    
+    func testSaveCrashTransaction_withSampleRateRand_SavesTransaction() throws {
+        // Arrange
+        let scope = fixture.scope
+        let sut = SentryHub(client: fixture.client, andScope: scope)
+        
+        let transaction = sut.startTransaction(
+            transactionContext: TransactionContext(
+                name: fixture.transactionName,
+                operation: fixture.transactionOperation,
+                sampled: .yes,
+                sampleRate: 0.123456789,
+                sampleRand: 0.987654321
+            )
+        )
+
+        // Act
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        sut.saveCrash(try XCTUnwrap(trans as? Transaction))
+        
+        // Assert
+        let client = fixture.client
+        XCTAssertEqual(1, client.saveCrashTransactionInvocations.count)
+        XCTAssertEqual(scope, client.saveCrashTransactionInvocations.first?.scope)
+        XCTAssertEqual(0, client.recordLostEvents.count)
+    }
+    
+    @available(*, deprecated, message: "The test is marked as deprecated to silence the deprecation warning of the initializer")
+    func testSaveCrashTransaction_NotSampled_DoesNotSaveTransaction() throws {
+        let scope = fixture.scope
+        let sut = SentryHub(client: fixture.client, andScope: scope)
+        
+        let transaction = sut.startTransaction(transactionContext: TransactionContext(name: fixture.transactionName, operation: fixture.transactionOperation, sampled: .no))
+
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        sut.saveCrash(try XCTUnwrap(trans as? Transaction))
+        
+        XCTAssertEqual(self.fixture.client.saveCrashTransactionInvocations.count, 0)
+    }
+
+    func testSaveCrashTransaction_NotSampledWithSampleRateRand_DoesNotSaveTransaction() throws {
+        let scope = fixture.scope
+        let sut = SentryHub(client: fixture.client, andScope: scope)
+        
+        let transaction = sut.startTransaction(
+            transactionContext: TransactionContext(
+                name: fixture.transactionName,
+                operation: fixture.transactionOperation,
+                sampled: .no,
+                sampleRate: 0.123456789,
+                sampleRand: 0.987654321
+            )
+        )
+
+        let trans = Dynamic(transaction).toTransaction().asAnyObject
+        sut.saveCrash(try XCTUnwrap(trans as? Transaction))
+        
+        XCTAssertEqual(self.fixture.client.saveCrashTransactionInvocations.count, 0)
     }
     
     func testCaptureMessageWithScope() {
@@ -725,6 +902,117 @@ class SentryHubTests: XCTestCase {
         assertNoEventsSent()
     }
     
+    func testCaptureCrashEvent_ClientHasNoReleaseName() {
+        sut = fixture.getSut()
+        let options = fixture.options
+        options.releaseName = nil
+        let client = SentryClient(options: options)
+        sut.bindClient(client)
+        
+        givenCrashedSession()
+        sut.captureCrash(fixture.event)
+        
+        assertNoEventsSent()
+    }
+    
+#if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
+    func testCaptureFatalAppHangEvent_AbnormalSessionExists() {
+        // Arrange
+        sut = fixture.getSut(fixture.options, fixture.scope)
+        givenAbnormalSession()
+        
+        assertNoAbnormalSessionSent()
+        
+        let environment = "test"
+        sut.configureScope { $0.setEnvironment(environment) }
+        
+        // Act
+        sut.captureFatalAppHang(fixture.event)
+        
+        // Assert
+        assertEventSentWithSession(scopeEnvironment: environment, sessionStatus: .abnormal, abnormalMechanism: "anr_foreground")
+    }
+    
+    func testCaptureFatalAppHangEvent_ManualSessionTracking_AbnormalSessionExists() {
+        // Arrange
+        givenAutoSessionTrackingDisabled()
+        givenAbnormalSession()
+        assertNoAbnormalSessionSent()
+        
+        let environment = "test"
+        sut.configureScope { $0.setEnvironment(environment) }
+        
+        // Act
+        sut.captureFatalAppHang(fixture.event)
+        
+        // Assert
+        assertEventSentWithSession(scopeEnvironment: environment, sessionStatus: .abnormal, abnormalMechanism: "anr_foreground")
+    }
+    
+    func testCaptureFatalAppHangEvent_AbnormalSessionDoesNotExist() {
+        // Arrange
+        sut.startSession() // there is already an existing session
+        
+        // Act
+        sut.captureFatalAppHang(fixture.event)
+        
+        // Assert
+        assertNoAbnormalSessionSent()
+        assertCrashEventSent()
+    }
+    
+    /**
+     * When autoSessionTracking is just enabled and there is a previous fatal app hang on the disk there is no session on the disk.
+     */
+    func testCaptureFatalAppHangEvent_FatalAppHangExistsButNoSessionExists() {
+        // Act
+        sut.captureFatalAppHang(fixture.event)
+        
+        // Assert
+        assertCrashEventSent()
+    }
+    
+    func testCaptureFatalAppHangEvent_WithoutExistingSessionAndAutoSessionTrackingEnabled() {
+        // Arrange
+        givenAutoSessionTrackingDisabled()
+        
+        // Act
+        sut.captureFatalAppHang(fixture.event)
+        
+        // Assert
+        assertCrashEventSent()
+    }
+    
+    func testCaptureFatalAppHangEvent_ClientIsNil() {
+        // Arrange
+        sut = fixture.getSut()
+        sut.bindClient(nil)
+        
+        // Act
+        givenAbnormalSession()
+        sut.captureFatalAppHang(fixture.event)
+        
+        // Assert
+        assertNoEventsSent()
+    }
+    
+    func testCaptureFatalAppHangEvent_ClientHasNoReleaseName() {
+        // Arrange
+        sut = fixture.getSut()
+        let options = fixture.options
+        options.releaseName = nil
+        let client = SentryClient(options: options)
+        sut.bindClient(client)
+        
+        // Act
+        givenAbnormalSession()
+        sut.captureFatalAppHang(fixture.event)
+        
+        // Assert
+        assertNoEventsSent()
+    }
+#endif // os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
+    
     func testCaptureEnvelope_WithEventWithError() throws {
         sut.startSession()
         
@@ -866,24 +1154,21 @@ class SentryHubTests: XCTestCase {
     
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
     func test_reportFullyDisplayed_enableTimeToFullDisplay_YES() {
-        fixture.options.enableTimeToFullDisplayTracing = true
         let sut = fixture.getSut(fixture.options)
         
-        let testTTDTracker = TestTimeToDisplayTracker()
+        let testTTDTracker = TestTimeToDisplayTracker(waitForFullDisplay: true)
         
         Dynamic(SentryUIViewControllerPerformanceTracker.shared).currentTTDTracker = testTTDTracker
         
         sut.reportFullyDisplayed()
         
         XCTAssertTrue(testTTDTracker.registerFullDisplayCalled)
-        
     }
     
     func test_reportFullyDisplayed_enableTimeToFullDisplay_NO() {
-        fixture.options.enableTimeToFullDisplayTracing = false
         let sut = fixture.getSut(fixture.options)
         
-        let testTTDTracker = TestTimeToDisplayTracker()
+        let testTTDTracker = TestTimeToDisplayTracker(waitForFullDisplay: false)
         
         Dynamic(SentryUIViewControllerPerformanceTracker.shared).currentTTDTracker = testTTDTracker
         
@@ -1039,130 +1324,6 @@ class SentryHubTests: XCTestCase {
                                                          ]))
     }
     
-    func testInitHubWithDefaultOptions_DoesNotEnableMetrics() {
-        let sut = fixture.getSut()
-        
-        sut.metrics.increment(key: "key")
-        sut.close()
-        
-        XCTAssertEqual(self.fixture.client.captureEnvelopeInvocations.count, 0)
-    }
-    
-    func testMetrics_IncrementOneValue() throws {
-        let options = fixture.options
-        options.enableMetrics = true
-        let sut = fixture.getSut(options)
-        
-        sut.metrics.increment(key: "key")
-        sut.flush(timeout: 1.0)
-        
-        let client = self.fixture.client
-        XCTAssertEqual(client.captureEnvelopeInvocations.count, 1)
-        
-        let envelope = try XCTUnwrap(client.captureEnvelopeInvocations.first)
-        XCTAssertNotNil(envelope.header.eventId)
-
-        // We only check if it's an envelope with a statsd envelope item.
-        // We validate the contents of the envelope in SentryMetricsClientTests
-        XCTAssertEqual(envelope.items.count, 1)
-        let envelopeItem = try XCTUnwrap(envelope.items.first)
-        XCTAssertEqual(envelopeItem.header.type, SentryEnvelopeItemTypeStatsd)
-        XCTAssertEqual(envelopeItem.header.contentType, "application/octet-stream")
-    }
-    
-    func testAddIncrementMetric_GetsLocalMetricsAggregatorFromCurrentSpan() throws {
-        let options = fixture.options
-        options.enableMetrics = true
-        let sut = fixture.getSut(options)
-        
-        let span = sut.startTransaction(name: fixture.transactionName, operation: fixture.transactionOperation, bindToScope: true)
-        let tracer = try XCTUnwrap(span as? SentryTracer)
-        
-        sut.metrics.increment(key: "key")
-        
-        let aggregator = tracer.getLocalMetricsAggregator()
-        
-        let metricsSummary = aggregator.serialize()
-        XCTAssertEqual(metricsSummary.count, 1)
-        
-        let bucket = try XCTUnwrap(metricsSummary["c:key"])
-        XCTAssertEqual(bucket.count, 1)
-        let metric = try XCTUnwrap(bucket.first)
-        XCTAssertEqual(metric["min"] as? Double, 1.0)
-        XCTAssertEqual(metric["max"] as? Double, 1.0)
-        XCTAssertEqual(metric["count"] as? Int, 1)
-        XCTAssertEqual(metric["sum"] as? Double, 1.0)
-    }
-    
-    func testAddIncrementMetric_AddsDefaultTags() throws {
-        let options = fixture.options
-        options.releaseName = "release1"
-        options.environment = "test"
-        options.enableMetrics = true
-        let sut = fixture.getSut(options)
-        
-        let span = sut.startTransaction(name: fixture.transactionName, operation: fixture.transactionOperation, bindToScope: true)
-        let tracer = try XCTUnwrap(span as? SentryTracer)
-        
-        sut.metrics.increment(key: "key", tags: ["my": "tag", "release": "overwritten"])
-        
-        let aggregator = tracer.getLocalMetricsAggregator()
-        
-        let metricsSummary = aggregator.serialize()
-        XCTAssertEqual(metricsSummary.count, 1)
-        
-        let bucket = try XCTUnwrap(metricsSummary["c:key"])
-        XCTAssertEqual(bucket.count, 1)
-        let metric = try XCTUnwrap(bucket.first)
-        XCTAssertEqual(metric["tags"] as? [String: String], ["my": "tag", "release": "overwritten", "environment": options.environment])
-    }
-    
-    func testAddIncrementMetric_ReleaseNameNil() throws {
-        let options = fixture.options
-        options.releaseName = nil
-        options.enableMetrics = true
-        let sut = fixture.getSut(options)
-        
-        let span = sut.startTransaction(name: fixture.transactionName, operation: fixture.transactionOperation, bindToScope: true)
-        let tracer = try XCTUnwrap(span as? SentryTracer)
-        
-        sut.metrics.increment(key: "key", tags: ["my": "tag"])
-        
-        let aggregator = tracer.getLocalMetricsAggregator()
-        
-        let metricsSummary = aggregator.serialize()
-        XCTAssertEqual(metricsSummary.count, 1)
-        
-        let bucket = try XCTUnwrap(metricsSummary["c:key"])
-        XCTAssertEqual(bucket.count, 1)
-        let metric = try XCTUnwrap(bucket.first)
-        XCTAssertEqual(metric["tags"] as? [String: String], ["my": "tag", "environment": options.environment])
-    }
-    
-    func testAddIncrementMetric_DefaultTagsDisabled() throws {
-        let options = fixture.options
-        options.releaseName = "release1"
-        options.environment = "test"
-        options.enableMetrics = true
-        options.enableDefaultTagsForMetrics = false
-        let sut = fixture.getSut(options)
-        
-        let span = sut.startTransaction(name: fixture.transactionName, operation: fixture.transactionOperation, bindToScope: true)
-        let tracer = try XCTUnwrap(span as? SentryTracer)
-        
-        sut.metrics.increment(key: "key", tags: ["my": "tag"])
-        
-        let aggregator = tracer.getLocalMetricsAggregator()
-        
-        let metricsSummary = aggregator.serialize()
-        XCTAssertEqual(metricsSummary.count, 1)
-        
-        let bucket = try XCTUnwrap(metricsSummary["c:key"])
-        XCTAssertEqual(bucket.count, 1)
-        let metric = try XCTUnwrap(bucket.first)
-        XCTAssertEqual(metric["tags"] as? [String: String], ["my": "tag"])
-    }
-    
     private func captureEventEnvelope(level: SentryLevel) {
         let event = TestData.event
         event.level = level
@@ -1179,6 +1340,12 @@ class SentryHubTests: XCTestCase {
     private func givenCrashedSession() {
         fixture.sentryCrashWrapper.internalCrashedLastLaunch = true
         fixture.fileManager.storeCrashedSession(fixture.crashedSession)
+        sut.closeCachedSession(withTimestamp: fixture.currentDateProvider.date())
+        sut.startSession()
+    }
+    
+    private func givenAbnormalSession() {
+        fixture.fileManager.storeAbnormalSession(fixture.abnormalSession)
         sut.closeCachedSession(withTimestamp: fixture.currentDateProvider.date())
         sut.startSession()
     }
@@ -1220,26 +1387,33 @@ class SentryHubTests: XCTestCase {
         }))
     }
     
+    private func assertNoAbnormalSessionSent() {
+        XCTAssertFalse(fixture.client.captureSessionInvocations.invocations.contains(where: { session in
+            return session.status == SentrySessionStatus.abnormal
+        }))
+    }
+    
     private func assertNoEventsSent() {
         XCTAssertEqual(0, fixture.client.captureEventInvocations.count)
         XCTAssertEqual(0, fixture.client.captureCrashEventWithSessionInvocations.count)
+        XCTAssertEqual(0, fixture.client.captureCrashEventInvocations.count)
     }
     
     private func assertEventSent() {
         let arguments = fixture.client.captureEventWithScopeInvocations
         XCTAssertEqual(1, arguments.count)
         XCTAssertEqual(fixture.event, arguments.first?.event)
-        XCTAssertFalse(arguments.first?.event.isCrashEvent ?? true)
+        XCTAssertFalse(arguments.first?.event.isFatalEvent ?? true)
     }
     
     private func assertCrashEventSent() {
         let arguments = fixture.client.captureCrashEventInvocations
         XCTAssertEqual(1, arguments.count)
         XCTAssertEqual(fixture.event, arguments.first?.event)
-        XCTAssertTrue(arguments.first?.event.isCrashEvent ?? false)
+        XCTAssertTrue(arguments.first?.event.isFatalEvent ?? false)
     }
     
-    private func assertEventSentWithSession(scopeEnvironment: String) {
+    private func assertEventSentWithSession(scopeEnvironment: String, sessionStatus: SentrySessionStatus = .crashed, abnormalMechanism: String? = nil) {
         let arguments = fixture.client.captureCrashEventWithSessionInvocations
         XCTAssertEqual(1, arguments.count)
         
@@ -1248,11 +1422,9 @@ class SentryHubTests: XCTestCase {
         
         let session = argument?.session
         XCTAssertEqual(fixture.currentDateProvider.date(), session?.timestamp)
-        XCTAssertEqual(SentrySessionStatus.crashed, session?.status)
+        XCTAssertEqual(sessionStatus, session?.status)
+        XCTAssertEqual(abnormalMechanism, session?.abnormalMechanism)
         XCTAssertEqual(fixture.options.environment, session?.environment)
-        
-        let event = argument?.scope.applyTo(event: fixture.event, maxBreadcrumbs: 10)
-        XCTAssertEqual(event?.environment, scopeEnvironment)
     }
     
     private func assertSessionWithIncrementedErrorCountedAdded() throws {
@@ -1286,8 +1458,8 @@ class SentryHubTests: XCTestCase {
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
 class TestTimeToDisplayTracker: SentryTimeToDisplayTracker {
     
-    init() {
-        super.init(for: UIViewController(), waitForFullDisplay: false, dispatchQueueWrapper: SentryDispatchQueueWrapper())
+    init(waitForFullDisplay: Bool = false) {
+        super.init(name: "UIViewController", waitForFullDisplay: waitForFullDisplay, dispatchQueueWrapper: SentryDispatchQueueWrapper())
     }
     
     var registerFullDisplayCalled = false

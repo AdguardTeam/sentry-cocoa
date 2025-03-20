@@ -4,12 +4,18 @@ import Foundation
 @objc
 protocol SentryANRTrackerDelegate {
     func anrDetected(type: SentryANRType)
-    func anrStopped()
+    
+    func anrStopped(result: SentryANRStoppedResult?)
 }
 
-@objc
-enum SentryANRType: Int {
-    case fullyBlocking
-    case nonFullyBlocking
-    case unknown
+@objcMembers
+class SentryANRStoppedResult: NSObject {
+    
+    let minDuration: TimeInterval
+    let maxDuration: TimeInterval
+    
+    init(minDuration: TimeInterval, maxDuration: TimeInterval) {
+        self.minDuration = minDuration
+        self.maxDuration = maxDuration
+    }
 }

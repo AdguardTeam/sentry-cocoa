@@ -1,3 +1,5 @@
+// swiftlint:disable file_length
+
 @testable import Sentry
 import SentryTestUtils
 import XCTest
@@ -69,7 +71,27 @@ class SentryFileManagerTests: XCTestCase {
             sut.setDelegate(delegate)
             return sut
         }
-        
+
+        func getValidPath() -> String {
+            URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("SentryTest")
+                .path
+        }
+
+        func getTooLongPath() -> String {
+            var url = URL(fileURLWithPath: NSTemporaryDirectory())
+            for element in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"] {
+                url = url.appendingPathComponent(Array(
+                    repeating: element,
+                    count: Int(NAME_MAX)
+                ).joined())
+            }
+            return url.path
+        }
+
+        func getInvalidPath() -> String {
+            URL(fileURLWithPath: "/dev/null").path
+        }
     }
     
     private var fixture: Fixture!
@@ -94,6 +116,7 @@ class SentryFileManagerTests: XCTestCase {
         sut.deleteAllFolders()
         sut.deleteTimestampLastInForeground()
         sut.deleteAppState()
+        sut.deleteAbnormalSession()
     }
     
     func testInitDoesNotOverrideDirectories() {
@@ -135,7 +158,7 @@ class SentryFileManagerTests: XCTestCase {
     }
     
     func testStoreInvalidEnvelope_ReturnsNil() {
-        let sdkInfoWithInvalidJSON = SentrySdkInfo(name: SentryInvalidJSONString() as String, andVersion: "8.0.0")
+        let sdkInfoWithInvalidJSON = SentrySdkInfo(name: SentryInvalidJSONString() as String, version: "8.0.0", integrations: [], features: [], packages: [])
         let headerWithInvalidJSON = SentryEnvelopeHeader(id: nil, sdkInfo: sdkInfoWithInvalidJSON, traceContext: nil)
         
         let envelope = SentryEnvelope(header: headerWithInvalidJSON, items: [])
@@ -503,6 +526,79 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertNil(actualSession)
     }
     
+    func testStoreAbnormalSession() throws {
+        // Arrange
+        let session = SentrySession(releaseName: "1.0.0", distinctId: "some-id")
+        session.abnormalMechanism = "anr_foreground"
+        
+        // Act
+        sut.storeAbnormalSession(session)
+        
+        // Assert
+        let actualSession = try XCTUnwrap(sut.readAbnormalSession())
+        
+        // Only assert a few properties. SentrySessionTests tests the serialization
+        XCTAssertEqual(session.sessionId, actualSession.sessionId)
+        XCTAssertEqual(session.distinctId, actualSession.distinctId)
+        XCTAssertEqual(session.releaseName, actualSession.releaseName)
+        XCTAssertEqual(session.abnormalMechanism, actualSession.abnormalMechanism)
+    }
+    
+    func testDeleteAbnormalSession() throws {
+        // Arrange
+        let session = SentrySession(releaseName: "1.0.0", distinctId: "some-id")
+        session.abnormalMechanism = "anr_foreground"
+        sut.storeAbnormalSession(session)
+        
+        // Act
+        sut.deleteAbnormalSession()
+        
+        // Assert
+        XCTAssertNil(sut.readAbnormalSession())
+    }
+    
+    func testDeleteAbnormalSession_WhenNoAbnormalSessionStored_DoesNotCrash() throws {
+        sut.deleteAbnormalSession()
+    }
+    
+    func testReadAbnormalSession_NoSessionStored () throws {
+        XCTAssertNil(sut.readAbnormalSession())
+    }
+    
+    func testAbnormalSessionAsync_DoesNotCrash() {
+        // Arrange
+
+        // Using 100 iterations because it's still enough to find race conditions and
+        // synchronization issues that could lead to crashes, but it's small enough to not
+        // time out in CI.
+        // If you want to use this to find synchronization issues, you should increase the number of iterations.
+        let iterations = 100
+        let expectation = expectation(description: "complete all abnormal session interactions")
+        expectation.expectedFulfillmentCount = iterations * 3
+        let dispatchQueue = DispatchQueue(label: "testAbnormalSessionAsync_DoesNotCrash", qos: .userInitiated, attributes: [.concurrent])
+        
+        // Act
+        for _ in 0..<iterations {
+            dispatchQueue.async {
+                self.sut.storeAbnormalSession(SentrySession(releaseName: "1.0.0", distinctId: "some-id"))
+                expectation.fulfill()
+            }
+            
+            dispatchQueue.async {
+                self.sut.readAbnormalSession()
+                expectation.fulfill()
+            }
+            
+            dispatchQueue.async {
+                self.sut.deleteAbnormalSession()
+                expectation.fulfill()
+            }
+        }
+        
+        // Assert
+        waitForExpectations(timeout: 10)
+    }
+    
     func testStoreAndReadTimestampLastInForeground() {
         let expectedTimestamp = TestCurrentDateProvider().date()
         sut.storeTimestampLast(inForeground: expectedTimestamp)
@@ -664,6 +760,85 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertNotNil(sut.readTimezoneOffset())
     }
     
+    func testStoreWriteAppHangEvent() throws {
+        // Arrange
+        let event = TestData.event
+        sut.storeAppHang(event)
+        
+        // Act
+        let actualEvent = try XCTUnwrap(sut.readAppHangEvent())
+        
+        // Assert
+        XCTAssertEqual(event.eventId, actualEvent.eventId)
+        XCTAssertEqual(event.timestamp, actualEvent.timestamp)
+        XCTAssertEqual(event.level, actualEvent.level)
+        XCTAssertEqual(event.message?.message, actualEvent.message?.message)
+        XCTAssertEqual(event.platform, actualEvent.platform)
+    }
+
+    func testReadAppHangEvent_WhenNoAppHangEvent_ReturnsNil() {
+        XCTAssertNil(sut.readAppHangEvent())
+    }
+
+    func testReadAppHangEvent_WithGarbage_ReturnsNil() throws {
+        // Arrange
+        let fileManager = FileManager.default
+        let appHangEventFilePath = try XCTUnwrap(Dynamic(sut).appHangEventFilePath.asString)
+        
+        fileManager.createFile(atPath: appHangEventFilePath, contents: "garbage".data(using: .utf8)!, attributes: nil)
+        
+        // Act
+        XCTAssertNil(sut.readAppHangEvent())
+    }
+    
+    func testStoreAppHangEvent_WithInvalidJSON_ReturnsNil() {
+        // Arrange
+        let event = TestData.event
+        event.message = SentryMessage(formatted: SentryInvalidJSONString() as String)
+        
+        // Act
+        sut.storeAppHang(event)
+        
+        // Assert
+        XCTAssertNil(sut.readAppHangEvent())
+    }
+    
+    func testAppHangEventExists_WithStoredEvent_ReturnsTrue() throws {
+        // Arrange
+        let event = TestData.event
+        sut.storeAppHang(event)
+        
+        // Act && Assert
+        XCTAssertTrue(sut.appHangEventExists())
+    }
+    
+    func testAppHangEventExists_WithNoStoredEvent_ReturnsFalse() throws {
+        // Act && Assert
+        XCTAssertFalse(sut.appHangEventExists())
+    }
+    
+    func testAppHangEventExists_WithGarbage_ReturnsTrue() throws {
+        // Arrange
+        let fileManager = FileManager.default
+        let appHangEventFilePath = try XCTUnwrap(Dynamic(sut).appHangEventFilePath.asString)
+        
+        fileManager.createFile(atPath: appHangEventFilePath, contents: "garbage".data(using: .utf8)!, attributes: nil)
+        
+        // Act && Assert
+        XCTAssertTrue(sut.appHangEventExists())
+    }
+
+    func testDeleteAppHangEvent() {
+        // Arrange
+        sut.storeAppHang(TestData.event)
+        
+        // Act
+        sut.deleteAppHangEvent()
+        
+        // Assert
+        XCTAssertNil(sut.readAppHangEvent())
+    }
+
     func testSentryPathFromOptionsCacheDirectoryPath() {
         fixture.options.cacheDirectoryPath = "/var/tmp"
         sut = fixture.getSut()
@@ -723,6 +898,181 @@ class SentryFileManagerTests: XCTestCase {
         try "garbage".write(to: URL(fileURLWithPath: sut.timezoneOffsetFilePath), atomically: true, encoding: .utf8)
         XCTAssertNil(sut.readTimezoneOffset())
     }
+
+    func testIsErrorPathTooLong_underlyingErrorsAvailableAndMultipleErrorsGiven_shouldUseErrorInUserInfo() throws {
+        // -- Arrange --
+        guard #available(macOS 11.3, iOS 14.5, watchOS 7.4, tvOS 14.5, *) else {
+            throw XCTSkip("This test is only for macOS 11 and above")
+        }
+        // When accessing via `underlyingErrors`, the first result is the error set with `NSUnderlyingErrorKey`.
+        // This test asserts if that behavior changes.
+        let error = NSError(domain: NSCocoaErrorDomain, code: 1, userInfo: [
+            NSMultipleUnderlyingErrorsKey: [
+                NSError(domain: NSCocoaErrorDomain, code: 2, userInfo: nil)
+            ],
+            NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENAMETOOLONG), userInfo: nil)
+        ])
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertTrue(result)
+    }
+
+    func testIsErrorPathTooLong_underlyingErrorsAvailableAndMultipleErrorsEmpty_shouldUseErrorInUserInfo() throws {
+        // -- Arrange --
+        guard #available(macOS 11.3, iOS 14.5, watchOS 7.4, tvOS 14.5, *) else {
+            throw XCTSkip("Test is disabled for this OS version")
+        }
+        // When accessing via `underlyingErrors`, the first result is the error set with `NSUnderlyingErrorKey`.
+        // This test asserts if that behavior changes.
+        let error = NSError(domain: NSCocoaErrorDomain, code: 1, userInfo: [
+            NSMultipleUnderlyingErrorsKey: [Any](),
+            NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENAMETOOLONG), userInfo: nil)
+        ])
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertTrue(result)
+    }
+
+    func testIsErrorPathTooLong_underlyingErrorsAvailableAndMultipleErrorsNotSet_shouldUseErrorInUserInfo() throws {
+        // -- Arrange --
+        guard #available(macOS 11.3, iOS 14.5, watchOS 7.4, tvOS 14.5, *) else {
+            throw XCTSkip("Test is disabled for this OS version")
+        }
+        // When accessing via `underlyingErrors`, the first result is the error set with `NSUnderlyingErrorKey`.
+        // This test asserts if that behavior changes.
+        let error = NSError(domain: NSCocoaErrorDomain, code: 1, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENAMETOOLONG), userInfo: nil)
+        ])
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertTrue(result)
+    }
+
+    func testIsErrorPathTooLong_underlyingErrorsAvailableAndOnlyMultipleErrorsGiven_shouldUseErrorFirstError() throws {
+        // -- Arrange --
+        guard #available(macOS 11.3, iOS 14.5, watchOS 7.4, tvOS 14.5, *) else {
+            throw XCTSkip("Test is disabled for this OS version")
+        }
+        // When accessing via `underlyingErrors`, the first result is the error set with `NSUnderlyingErrorKey`.
+        // This test asserts if that behavior changes.
+        let error = NSError(domain: NSCocoaErrorDomain, code: 1, userInfo: [
+            NSMultipleUnderlyingErrorsKey: [
+                NSError(domain: NSPOSIXErrorDomain, code: Int(ENAMETOOLONG), userInfo: nil),
+                NSError(domain: NSCocoaErrorDomain, code: 2, userInfo: nil)
+            ]
+        ])
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertTrue(result)
+    }
+
+    func testIsErrorPathTooLong_underlyingErrorsNotAvailableAndErrorNotInUserInfo_shouldNotCheckError() throws {
+        // -- Arrange --
+        guard #unavailable(macOS 11.3, iOS 14.5, watchOS 7.4, tvOS 14.5) else {
+            throw XCTSkip("Test is disabled for this OS version")
+        }
+        // When accessing via `underlyingErrors`, the first result is the error set with `NSUnderlyingErrorKey`.
+        // This test asserts if that behavior changes.
+        let error = NSError(domain: NSCocoaErrorDomain, code: 1, userInfo: [:])
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertFalse(result)
+    }
+
+    func testIsErrorPathTooLong_underlyingErrorsNotAvailableAndNonErrorInUserInfo_shouldNotCheckError() throws {
+        // -- Arrange --
+        guard #unavailable(macOS 11.3, iOS 14.5, watchOS 7.4, tvOS 14.5) else {
+            throw XCTSkip("Test is disabled for this OS version")
+        }
+        // When accessing via `underlyingErrors`, the first result is the error set with `NSUnderlyingErrorKey`.
+        // This test asserts if that behavior changes.
+        let error = NSError(domain: NSCocoaErrorDomain, code: 1, userInfo: [
+            NSUnderlyingErrorKey: "This is not an error"
+        ])
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertFalse(result)
+    }
+
+    func testIsErrorPathTooLong_underlyingErrorsNotAvailableAndErrorInUserInfo_shouldNotCheckError() throws {
+        // -- Arrange --
+        guard #unavailable(macOS 11.3, iOS 14.5, watchOS 7.4, tvOS 14.5) else {
+            throw XCTSkip("Test is disabled for this OS version")
+        }
+        // When accessing via `underlyingErrors`, the first result is the error set with `NSUnderlyingErrorKey`.
+        // This test asserts if that behavior changes.
+        let error = NSError(domain: NSCocoaErrorDomain, code: 1, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENAMETOOLONG), userInfo: nil)
+        ])
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertTrue(result)
+    }
+
+    func testIsErrorPathTooLong_errorIsEnameTooLong_shouldReturnTrue() throws {
+        // -- Arrange --
+        let error = NSError(domain: NSPOSIXErrorDomain, code: Int(ENAMETOOLONG), userInfo: nil)
+        // -- Act --
+        let result = isErrorPathTooLong(error)
+        // -- Assert --
+        XCTAssertTrue(result)
+    }
+
+    func testCreateDirectoryIfNotExists_successful_shouldNotLogError() throws {
+        // -- Arrange -
+        let logOutput = TestLogOutput()
+        SentryLog.setLogOutput(logOutput)
+        SentryLog.configureLog(true, diagnosticLevel: .debug)
+
+        let path = fixture.getValidPath()
+        var error: NSError?
+        // -- Act --
+        let result = createDirectoryIfNotExists(path, &error)
+        // -- Assert -
+        XCTAssertTrue(result)
+        XCTAssertEqual(logOutput.loggedMessages.count, 0)
+    }
+
+    func testCreateDirectoryIfNotExists_pathTooLogError_shouldLogError() throws {
+        // -- Arrange -
+        let logOutput = TestLogOutput()
+        SentryLog.setLogOutput(logOutput)
+        SentryLog.configureLog(true, diagnosticLevel: .debug)
+
+        let path = fixture.getTooLongPath()
+        var error: NSError?
+        // -- Act --
+        let result = createDirectoryIfNotExists(path, &error)
+        // -- Assert -
+        XCTAssertFalse(result)
+        XCTAssertEqual(error?.domain, SentryErrorDomain)
+        XCTAssertEqual(error?.code, 108)
+        XCTAssertEqual(logOutput.loggedMessages.count, 1)
+    }
+
+    func testCreateDirectoryIfNotExists_otherError_shouldNotLogError() throws {
+        // -- Arrange -
+        let logOutput = TestLogOutput()
+        SentryLog.setLogOutput(logOutput)
+        SentryLog.configureLog(true, diagnosticLevel: .debug)
+
+        let path = fixture.getInvalidPath()
+        var error: NSError?
+        // -- Act --
+        let result = createDirectoryIfNotExists(path, &error)
+        // -- Assert -
+        XCTAssertFalse(result)
+        XCTAssertEqual(error?.domain, SentryErrorDomain)
+        XCTAssertEqual(error?.code, 108)
+        XCTAssertEqual(logOutput.loggedMessages.count, 0)
+    }
 }
 
 #if os(iOS) || os(macOS) || targetEnvironment(macCatalyst)
@@ -741,14 +1091,30 @@ extension SentryFileManagerTests {
     }
     
     func testAppLaunchProfileConfiguration() throws {
+        // -- Assert --
         let expectedTracesSampleRate = 0.12
+        let expectedTracesSampleRand = 0.55
         let expectedProfilesSampleRate = 0.34
-        try ensureAppLaunchProfileConfig(tracesSampleRate: expectedTracesSampleRate, profilesSampleRate: expectedProfilesSampleRate)
+        let expectedProfilesSampleRand = 0.66
+
+        // -- Act --
+        try ensureAppLaunchProfileConfig(
+            tracesSampleRate: expectedTracesSampleRate,
+            tracesSampleRand: expectedTracesSampleRand,
+            profilesSampleRate: expectedProfilesSampleRate,
+            profilesSampleRand: expectedProfilesSampleRand
+        )
         let config = appLaunchProfileConfiguration()
+
+        // -- Assert --
         let actualTracesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRate]).doubleValue
+        let actualTracesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRand]).doubleValue
         let actualProfilesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRate]).doubleValue
+        let actualProfilesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRand]).doubleValue
         XCTAssertEqual(actualTracesSampleRate, expectedTracesSampleRate)
+        XCTAssertEqual(actualTracesSampleRand, expectedTracesSampleRand)
         XCTAssertEqual(actualProfilesSampleRate, expectedProfilesSampleRate)
+        XCTAssertEqual(actualProfilesSampleRand, expectedProfilesSampleRand)
     }
     
     // if a file isn't present when we expect it to be, like if there was an issue when we went to write it to disk
@@ -758,40 +1124,61 @@ extension SentryFileManagerTests {
     }
     
     func testWriteAppLaunchProfilingConfigFile_noCurrentFileExists() throws {
+        // -- Arrange --
         try ensureAppLaunchProfileConfig(exists: false)
         
         let expectedTracesSampleRate = 0.12
+        let expectedTracesSampleRand = 0.55
         let expectedProfilesSampleRate = 0.34
+        let expectedProfilesSampleRand = 0.66
         writeAppLaunchProfilingConfigFile([
             kSentryLaunchProfileConfigKeyTracesSampleRate: expectedTracesSampleRate,
-            kSentryLaunchProfileConfigKeyProfilesSampleRate: expectedProfilesSampleRate
+            kSentryLaunchProfileConfigKeyTracesSampleRand: expectedTracesSampleRand,
+            kSentryLaunchProfileConfigKeyProfilesSampleRate: expectedProfilesSampleRate,
+            kSentryLaunchProfileConfigKeyProfilesSampleRand: expectedProfilesSampleRand
         ])
         
         let config = NSDictionary(contentsOf: launchProfileConfigFileURL())
         
         let actualTracesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRate] as? NSNumber).doubleValue
+        let actualTracesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRand] as? NSNumber).doubleValue
         let actualProfilesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRate] as? NSNumber).doubleValue
+        let actualProfilesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRand] as? NSNumber).doubleValue
         XCTAssertEqual(actualTracesSampleRate, expectedTracesSampleRate)
+        XCTAssertEqual(actualTracesSampleRand, expectedTracesSampleRand)
         XCTAssertEqual(actualProfilesSampleRate, expectedProfilesSampleRate)
+        XCTAssertEqual(actualProfilesSampleRand, expectedProfilesSampleRand)
     }
     
     // if a file is still present in the primary location, like if a crash occurred before it could be removed, or an error occurred when trying to remove it or move it to the backup location, make sure we overwrite it
     func testWriteAppLaunchProfilingConfigFile_fileAlreadyExists() throws {
-        try ensureAppLaunchProfileConfig(exists: true, tracesSampleRate: 0.75, profilesSampleRate: 0.75)
-        
+        // -- Arrange --
+        try ensureAppLaunchProfileConfig(exists: true, tracesSampleRate: 0.75, tracesSampleRand: 0.25, profilesSampleRate: 0.75, profilesSampleRand: 0.35)
+
         let expectedTracesSampleRate = 0.12
+        let expectedTracesSampleRand = 0.55
         let expectedProfilesSampleRate = 0.34
+        let expectedProfilesSampleRand = 0.66
+
+        // -- Act --
         writeAppLaunchProfilingConfigFile([
             kSentryLaunchProfileConfigKeyTracesSampleRate: expectedTracesSampleRate,
-            kSentryLaunchProfileConfigKeyProfilesSampleRate: expectedProfilesSampleRate
+            kSentryLaunchProfileConfigKeyTracesSampleRand: expectedTracesSampleRand,
+            kSentryLaunchProfileConfigKeyProfilesSampleRate: expectedProfilesSampleRate,
+            kSentryLaunchProfileConfigKeyProfilesSampleRand: expectedProfilesSampleRand
         ])
         
+        // -- Assert --
         let config = NSDictionary(contentsOf: launchProfileConfigFileURL())
         
         let actualTracesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRate] as? NSNumber).doubleValue
+        let actualTracesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRand] as? NSNumber).doubleValue
         let actualProfilesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRate] as? NSNumber).doubleValue
+        let actualProfilesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRand] as? NSNumber).doubleValue
         XCTAssertEqual(actualTracesSampleRate, expectedTracesSampleRate)
+        XCTAssertEqual(actualTracesSampleRand, expectedTracesSampleRand)
         XCTAssertEqual(actualProfilesSampleRate, expectedProfilesSampleRate)
+        XCTAssertEqual(actualProfilesSampleRand, expectedProfilesSampleRand)
     }
     
     func testRemoveAppLaunchProfilingConfigFile() throws {
@@ -826,11 +1213,16 @@ extension SentryFileManagerTests {
 
 // MARK: Private profiling tests
 private extension SentryFileManagerTests {
-    func ensureAppLaunchProfileConfig(exists: Bool = true, tracesSampleRate: Double = 1, profilesSampleRate: Double = 1) throws {
+    func ensureAppLaunchProfileConfig(exists: Bool = true, tracesSampleRate: Double = 1, tracesSampleRand: Double = 1.0, profilesSampleRate: Double = 1, profilesSampleRand: Double = 1.0) throws {
         let url = launchProfileConfigFileURL()
         
         if exists {
-            let dict = [kSentryLaunchProfileConfigKeyTracesSampleRate: tracesSampleRate, kSentryLaunchProfileConfigKeyProfilesSampleRate: profilesSampleRate]
+            let dict = [
+                kSentryLaunchProfileConfigKeyTracesSampleRate: tracesSampleRate,
+                kSentryLaunchProfileConfigKeyTracesSampleRand: tracesSampleRand,
+                kSentryLaunchProfileConfigKeyProfilesSampleRate: profilesSampleRate,
+                kSentryLaunchProfileConfigKeyProfilesSampleRand: profilesSampleRand
+            ]
             try (dict as NSDictionary).write(to: url)
         } else {
             let fm = FileManager.default

@@ -53,7 +53,7 @@ NS_ASSUME_NONNULL_BEGIN
     dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(
         DISPATCH_QUEUE_SERIAL, DISPATCH_QUEUE_PRIORITY_HIGH, 0);
     SentryDispatchQueueWrapper *dispatchQueueWrapper =
-        [[SentryDispatchQueueWrapper alloc] initWithName:"sentry-out-of-memory-tracker"
+        [[SentryDispatchQueueWrapper alloc] initWithName:"io.sentry.watchdog-termination-tracker"
                                               attributes:attributes];
 
     SentryFileManager *fileManager = [[[SentrySDK currentHub] getClient] fileManager];
@@ -74,7 +74,8 @@ NS_ASSUME_NONNULL_BEGIN
     [self.tracker start];
 
     self.anrTracker =
-        [SentryDependencyContainer.sharedInstance getANRTrackerV1:options.appHangTimeoutInterval];
+        [SentryDependencyContainer.sharedInstance getANRTracker:options.appHangTimeoutInterval
+                                                    isV2Enabled:options.enableAppHangTrackingV2];
     [self.anrTracker addListener:self];
 
     self.appStateManager = appStateManager;
@@ -110,7 +111,7 @@ NS_ASSUME_NONNULL_BEGIN
         updateAppState:^(SentryAppState *appState) { appState.isANROngoing = YES; }];
 }
 
-- (void)anrStopped
+- (void)anrStoppedWithResult:(SentryANRStoppedResult *_Nullable)result
 {
     [self.appStateManager
         updateAppState:^(SentryAppState *appState) { appState.isANROngoing = NO; }];

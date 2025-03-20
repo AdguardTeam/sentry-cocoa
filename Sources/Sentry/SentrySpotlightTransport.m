@@ -86,6 +86,11 @@ NS_ASSUME_NONNULL_BEGIN
         }];
 }
 
+- (void)storeEnvelope:(SentryEnvelope *)envelope
+{
+    [self sendEnvelope:envelope];
+}
+
 - (SentryFlushResult)flush:(NSTimeInterval)timeout
 {
     // Empty on purpose
@@ -104,13 +109,13 @@ NS_ASSUME_NONNULL_BEGIN
     // Empty on purpose
 }
 
-#if defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#if defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 - (void)setStartFlushCallback:(nonnull void (^)(void))callback
 {
     // Empty on purpose
 }
 
-#endif // defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#endif // defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 
 @end
 

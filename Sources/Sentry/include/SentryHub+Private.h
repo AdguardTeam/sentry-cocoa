@@ -38,6 +38,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)captureCrashEvent:(SentryEvent *)event withScope:(SentryScope *)scope;
 
+#if SENTRY_HAS_UIKIT
+- (void)captureFatalAppHangEvent:(SentryEvent *)event;
+#endif // SENTRY_HAS_UIKIT
+
 - (void)captureReplayEvent:(SentryReplayEvent *)replayEvent
            replayRecording:(SentryReplayRecording *)replayRecording
                      video:(NSURL *)videoURL;
@@ -59,6 +63,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)captureTransaction:(SentryTransaction *)transaction
                   withScope:(SentryScope *)scope
     additionalEnvelopeItems:(NSArray<SentryEnvelopeItem *> *)additionalEnvelopeItems;
+- (void)saveCrashTransaction:(SentryTransaction *)transaction;
 
 - (void)storeEnvelope:(SentryEnvelope *)envelope;
 - (void)captureEnvelope:(SentryEnvelope *)envelope;

@@ -18,13 +18,14 @@
 #import "SentrySDK+Private.h"
 #import "SentryScope+Private.h"
 #import "SentrySerialization.h"
+#import "SentrySpanOperation.h"
 #import "SentryStacktrace.h"
 #import "SentrySwift.h"
 #import "SentryThread.h"
 #import "SentryThreadInspector.h"
 #import "SentryTraceContext.h"
 #import "SentryTraceHeader.h"
-#import "SentryTraceOrigins.h"
+#import "SentryTraceOrigin.h"
 #import "SentryTracer.h"
 #import "SentryUser.h"
 #import <objc/runtime.h>
@@ -175,8 +176,8 @@ static NSString *const SentryNetworkTrackerThreadSanitizerMessage
 
     UrlSanitized *safeUrl = [[UrlSanitized alloc] initWithURL:url];
     @synchronized(sessionTask) {
-        __block id<SentrySpan> span;
-        __block id<SentrySpan> netSpan;
+        __block id<SentrySpan> _Nullable span;
+        __block id<SentrySpan> _Nullable netSpan;
         netSpan = objc_getAssociatedObject(sessionTask, &SENTRY_NETWORK_REQUEST_TRACKER_SPAN);
 
         // The task already has a span. Nothing to do.
@@ -184,28 +185,27 @@ static NSString *const SentryNetworkTrackerThreadSanitizerMessage
             return;
         }
 
-        [SentrySDK.currentHub.scope useSpan:^(id<SentrySpan> _Nullable innerSpan) {
-            if (innerSpan != nil) {
-                span = innerSpan;
-                netSpan = [span startChildWithOperation:SENTRY_NETWORK_REQUEST_OPERATION
-                                            description:[NSString stringWithFormat:@"%@ %@",
-                                                            sessionTask.currentRequest.HTTPMethod,
-                                                            safeUrl.sanitizedUrl]];
-                netSpan.origin = SentryTraceOriginAutoHttpNSURLSession;
+        id<SentrySpan> _Nullable currentSpan = [SentrySDK.currentHub.scope span];
+        if (currentSpan != nil) {
+            span = currentSpan;
+            netSpan = [span startChildWithOperation:SentrySpanOperationNetworkRequestOperation
+                                        description:[NSString stringWithFormat:@"%@ %@",
+                                                        sessionTask.currentRequest.HTTPMethod,
+                                                        safeUrl.sanitizedUrl]];
+            netSpan.origin = SentryTraceOriginAutoHttpNSURLSession;
 
-                [netSpan setDataValue:sessionTask.currentRequest.HTTPMethod
-                               forKey:@"http.request.method"];
-                [netSpan setDataValue:safeUrl.sanitizedUrl forKey:@"url"];
-                [netSpan setDataValue:@"fetch" forKey:@"type"];
+            [netSpan setDataValue:sessionTask.currentRequest.HTTPMethod
+                           forKey:@"http.request.method"];
+            [netSpan setDataValue:safeUrl.sanitizedUrl forKey:@"url"];
+            [netSpan setDataValue:@"fetch" forKey:@"type"];
 
-                if (safeUrl.queryItems && safeUrl.queryItems.count > 0) {
-                    [netSpan setDataValue:safeUrl.query forKey:@"http.query"];
-                }
-                if (safeUrl.fragment != nil) {
-                    [netSpan setDataValue:safeUrl.fragment forKey:@"http.fragment"];
-                }
+            if (safeUrl.queryItems && safeUrl.queryItems.count > 0) {
+                [netSpan setDataValue:safeUrl.query forKey:@"http.query"];
             }
-        }];
+            if (safeUrl.fragment != nil) {
+                [netSpan setDataValue:safeUrl.fragment forKey:@"http.fragment"];
+            }
+        }
 
         // We only create a span if there is a transaction in the scope,
         // otherwise we have nothing else to do here.
@@ -456,8 +456,10 @@ static NSString *const SentryNetworkTrackerThreadSanitizerMessage
     context[@"response"] = response;
 
     if (self.isGraphQLOperationTrackingEnabled) {
-        context[@"graphql_operation_name"] =
-            [URLSessionTaskHelper getGraphQLOperationNameFrom:sessionTask];
+        NSString *operationName = [URLSessionTaskHelper getGraphQLOperationNameFrom:sessionTask];
+        if (operationName != nil) {
+            context[@"graphql"] = @{ @"operation_name" : operationName };
+        }
     }
 
     event.context = context;
@@ -491,7 +493,10 @@ static NSString *const SentryNetworkTrackerThreadSanitizerMessage
     NSDate *requestStart
         = objc_getAssociatedObject(sessionTask, &SENTRY_NETWORK_REQUEST_START_DATE);
 
-    SentryLevel breadcrumbLevel = sessionTask.error != nil ? kSentryLevelError : kSentryLevelInfo;
+    NSInteger responseStatusCode = [self urlResponseStatusCode:sessionTask.response];
+    SentryLevel breadcrumbLevel = [self getBreadcrumbLevel:sessionTask
+                                        responseStatusCode:responseStatusCode];
+
     SentryBreadcrumb *breadcrumb = [[SentryBreadcrumb alloc] initWithLevel:breadcrumbLevel
                                                                   category:@"http"];
 
@@ -506,7 +511,7 @@ static NSString *const SentryNetworkTrackerThreadSanitizerMessage
         [NSNumber numberWithLongLong:sessionTask.countOfBytesSent];
     breadcrumbData[@"response_body_size"] =
         [NSNumber numberWithLongLong:sessionTask.countOfBytesReceived];
-    NSInteger responseStatusCode = [self urlResponseStatusCode:sessionTask.response];
+
     if (responseStatusCode != -1) {
         NSNumber *statusCode = [NSNumber numberWithInteger:responseStatusCode];
         breadcrumbData[@"status_code"] = statusCode;
@@ -598,6 +603,23 @@ static NSString *const SentryNetworkTrackerThreadSanitizerMessage
         return kSentrySpanStatusDeadlineExceeded;
     }
     return kSentrySpanStatusUndefined;
+}
+
+- (SentryLevel)getBreadcrumbLevel:(NSURLSessionTask *)sessionTask
+               responseStatusCode:(NSInteger)responseStatusCode
+{
+    SentryLevel breadcrumbLevel = kSentryLevelInfo;
+    if (responseStatusCode >= 400 && responseStatusCode < 500) {
+        breadcrumbLevel = kSentryLevelWarning;
+    } else if (responseStatusCode >= 500 && responseStatusCode < 600) {
+        breadcrumbLevel = kSentryLevelError;
+    }
+
+    if (sessionTask.error != nil) {
+        breadcrumbLevel = kSentryLevelError;
+    }
+
+    return breadcrumbLevel;
 }
 
 @end
