@@ -1,13 +1,35 @@
 @testable import Sentry
+import SentryTestUtils
 import XCTest
 
 class SentrySerializationTests: XCTestCase {
     
     private class Fixture {
         static var invalidData = "hi".data(using: .utf8)!
-        static var traceContext = TraceContext(trace: SentryId(), publicKey: "PUBLIC_KEY", releaseName: "RELEASE_NAME", environment: "TEST", transaction: "transaction", userSegment: "some segment", sampleRate: "0.25", sampled: "true", replayId: nil)
+        static var traceContext = TraceContext(
+            trace: SentryId(),
+            publicKey: "PUBLIC_KEY",
+            releaseName: "RELEASE_NAME",
+            environment: "TEST",
+            transaction: "transaction",
+            userSegment: "some segment",
+            sampleRate: "0.25",
+            sampleRand: "0.6543",
+            sampled: "true",
+            replayId: nil
+        )
     }
-    
+
+    override func setUp() {
+        super.setUp()
+        clearTestState()
+    }
+
+    override func tearDown() {
+        super.tearDown()
+        clearTestState()
+    }
+
     func testSerializationFailsWithInvalidJSONObject() {
         let json: [String: Any] = [
             "valid object": "hi, i'm a valid object",
@@ -24,7 +46,7 @@ class SentrySerializationTests: XCTestCase {
     }
     
     func testEnvelopeWithData_InvalidEnvelopeHeaderJSON_ReturnsNil() {
-        let sdkInfoWithInvalidJSON = SentrySdkInfo(name: SentryInvalidJSONString() as String, andVersion: "8.0.0")
+        let sdkInfoWithInvalidJSON = SentrySdkInfo(name: SentryInvalidJSONString() as String, version: "8.0.0", integrations: [], features: [], packages: [])
         let headerWithInvalidJSON = SentryEnvelopeHeader(id: nil, sdkInfo: sdkInfoWithInvalidJSON, traceContext: nil)
         
         let envelope = SentryEnvelope(header: headerWithInvalidJSON, items: [])
@@ -125,7 +147,7 @@ class SentrySerializationTests: XCTestCase {
     }
     
     func testEnvelopeWithData_WithSdkInfo_ReturnsSDKInfo() throws {
-        let sdkInfo = SentrySdkInfo(name: "sentry.cocoa", andVersion: "5.0.1")
+        let sdkInfo = SentrySdkInfo(name: "sentry.cocoa", version: "5.0.1", integrations: [], features: [], packages: [])
         let envelopeHeader = SentryEnvelopeHeader(id: nil, sdkInfo: sdkInfo, traceContext: nil)
         let envelope = SentryEnvelope(header: envelopeHeader, singleItem: createItemWithEmptyAttachment())
         
@@ -149,6 +171,32 @@ class SentrySerializationTests: XCTestCase {
         let envelope = SentryEnvelope(header: envelopeHeader, singleItem: createItemWithEmptyAttachment())
         
         let deserializedEnvelope = try XCTUnwrap(SentrySerialization.envelope(with: serializeEnvelope(envelope: envelope)))
+        XCTAssertNotNil(deserializedEnvelope.header.traceContext)
+        assertTraceState(firstTrace: trace, secondTrace: deserializedEnvelope.header.traceContext!)
+    }
+
+    func testEnvelopeWithDataWithSampleRand_TraceContextWithoutUser_ReturnsTraceContext() throws {
+        // -- Arrange --
+        let trace = TraceContext(
+            trace: SentryId(),
+            publicKey: "PUBLIC_KEY",
+            releaseName: "RELEASE_NAME",
+            environment: "TEST",
+            transaction: "transaction",
+            userSegment: nil,
+            sampleRate: nil,
+            sampleRand: nil,
+            sampled: nil,
+            replayId: nil
+        )
+
+        // -- Act --
+        let envelopeHeader = SentryEnvelopeHeader(id: nil, traceContext: trace)
+        let envelope = SentryEnvelope(header: envelopeHeader, singleItem: createItemWithEmptyAttachment())
+        
+        let deserializedEnvelope = try XCTUnwrap(SentrySerialization.envelope(with: serializeEnvelope(envelope: envelope)))
+
+        // -- Assert --
         XCTAssertNotNil(deserializedEnvelope.header.traceContext)
         assertTraceState(firstTrace: trace, secondTrace: deserializedEnvelope.header.traceContext!)
     }
@@ -523,18 +571,19 @@ class SentrySerializationTests: XCTestCase {
         return SentryEnvelopeItem(header: itemHeader, data: itemData)
     }
     
-    private func assertDefaultSdkInfoSet(deserializedEnvelope: SentryEnvelope) {
-        let sdkInfo = SentrySdkInfo(name: SentryMeta.sdkName, andVersion: SentryMeta.versionString)
-        XCTAssertEqual(sdkInfo, deserializedEnvelope.header.sdkInfo)
+    private func assertDefaultSdkInfoSet(deserializedEnvelope: SentryEnvelope, file: StaticString = #file, line: UInt = #line) {
+        let sdkInfo = SentrySdkInfo(name: SentryMeta.sdkName, version: SentryMeta.versionString, integrations: [], features: [], packages: [])
+        XCTAssertEqual(sdkInfo, deserializedEnvelope.header.sdkInfo, file: file, line: line)
     }
     
-    func assertTraceState(firstTrace: TraceContext, secondTrace: TraceContext) {
-        XCTAssertEqual(firstTrace.traceId, secondTrace.traceId)
-        XCTAssertEqual(firstTrace.publicKey, secondTrace.publicKey)
-        XCTAssertEqual(firstTrace.releaseName, secondTrace.releaseName)
-        XCTAssertEqual(firstTrace.environment, secondTrace.environment)
-        XCTAssertEqual(firstTrace.userSegment, secondTrace.userSegment)
-        XCTAssertEqual(firstTrace.sampleRate, secondTrace.sampleRate)
+    private func assertTraceState(firstTrace: TraceContext, secondTrace: TraceContext, file: StaticString = #file, line: UInt = #line) {
+        XCTAssertEqual(firstTrace.traceId, secondTrace.traceId, "Trace ID is not equal", file: file, line: line)
+        XCTAssertEqual(firstTrace.publicKey, secondTrace.publicKey, "Public key is not equal", file: file, line: line)
+        XCTAssertEqual(firstTrace.releaseName, secondTrace.releaseName, "Release name is not equal", file: file, line: line)
+        XCTAssertEqual(firstTrace.environment, secondTrace.environment, "Environment is not equal", file: file, line: line)
+        XCTAssertEqual(firstTrace.userSegment, secondTrace.userSegment, "User segment is not equal", file: file, line: line)
+        XCTAssertEqual(firstTrace.sampleRand, secondTrace.sampleRand, "Sample rand is not equal", file: file, line: line)
+        XCTAssertEqual(firstTrace.sampleRate, secondTrace.sampleRate, "Sample rate is not equal", file: file, line: line)
     }
 }
 

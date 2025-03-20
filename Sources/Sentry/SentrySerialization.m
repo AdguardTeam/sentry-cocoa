@@ -42,7 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 
     SentrySdkInfo *sdkInfo = envelope.header.sdkInfo;
     if (nil != sdkInfo) {
-        [serializedData addEntriesFromDictionary:[sdkInfo serialize]];
+        [serializedData setValue:[sdkInfo serialize] forKey:@"sdk"];
     }
 
     SentryTraceContext *traceContext = envelope.header.traceContext;
@@ -82,9 +82,9 @@ NS_ASSUME_NONNULL_BEGIN
 {
     SentryEnvelopeHeader *envelopeHeader = nil;
     const unsigned char *bytes = [data bytes];
-    int envelopeHeaderIndex = 0;
+    NSUInteger envelopeHeaderIndex = 0;
 
-    for (int i = 0; i < data.length; ++i) {
+    for (NSUInteger i = 0; i < data.length; ++i) {
         if (bytes[i] == '\n') {
             envelopeHeaderIndex = i;
             // Envelope header end
@@ -111,7 +111,7 @@ NS_ASSUME_NONNULL_BEGIN
 
             SentrySdkInfo *sdkInfo = nil;
             if (nil != headerDictionary[@"sdk"]) {
-                sdkInfo = [[SentrySdkInfo alloc] initWithDict:headerDictionary];
+                sdkInfo = [[SentrySdkInfo alloc] initWithDict:headerDictionary[@"sdk"]];
             }
 
             SentryTraceContext *traceContext = nil;
@@ -142,12 +142,12 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     // Parse items
-    NSInteger itemHeaderStart = envelopeHeaderIndex + 1;
+    NSUInteger itemHeaderStart = envelopeHeaderIndex + 1;
 
     NSMutableArray<SentryEnvelopeItem *> *items = [NSMutableArray new];
     NSUInteger endOfEnvelope = data.length - 1;
 
-    for (NSInteger i = itemHeaderStart; i <= endOfEnvelope; ++i) {
+    for (NSUInteger i = itemHeaderStart; i <= endOfEnvelope; ++i) {
         if (bytes[i] == '\n' || i == endOfEnvelope) {
 
             NSData *itemHeaderData =

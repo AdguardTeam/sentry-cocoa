@@ -63,7 +63,10 @@ class SentryStacktraceBuilderTests: XCTestCase {
         XCTAssertFalse(result, "The stacktrace should not contain the function that builds the stacktrace")
     }
     
-    func testFramesOrder() {
+    func testFramesOrder() throws {
+        if #available(iOS 18, macOS 15, tvOS 15, *) {
+            throw XCTSkip("Stacktrace frames order testing is disabled for this OS version")
+        }
         let actual = fixture.sut.buildStacktraceForCurrentThread()
         
         // Make sure the first 4 frames contain main
@@ -136,13 +139,13 @@ class SentryStacktraceBuilderTests: XCTestCase {
     }
 
     @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
-    func firstFrame() async -> Int {
+    private func firstFrame() async -> Int {
         print("\(Date()) [Sentry] [TEST] first async frame about to await...")
         return await innerFrame1()
     }
 
     @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
-    func innerFrame1() async -> Int {
+    private func innerFrame1() async -> Int {
         print("\(Date()) [Sentry] [TEST] second async frame about to await on task...")
         await Task { @MainActor in
             print("\(Date()) [Sentry] [TEST] executing task inside second async frame...")
@@ -151,7 +154,7 @@ class SentryStacktraceBuilderTests: XCTestCase {
     }
 
     @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
-    func innerFrame2() async -> Int {
+    private func innerFrame2() async -> Int {
         let needed = ["firstFrame", "innerFrame1", "innerFrame2"]
         let actual = fixture.sut.buildStacktraceForCurrentThreadAsyncUnsafe()!
         let filteredFrames = actual.frames

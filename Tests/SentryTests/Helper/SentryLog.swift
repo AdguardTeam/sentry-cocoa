@@ -9,16 +9,22 @@ extension Sentry.SentryLog {
     }
     
     static func setLogOutput(_ output: SentryLogOutputProtocol) {
-        #if TEST || TESTCI
+        #if SENTRY_TEST || SENTRY_TEST_CI
         SentryLog.setOutput(output)
         #endif
     }
     
     static func getLogOutput() -> SentryLogOutputProtocol {
-        #if TEST || TESTCI
+        #if SENTRY_TEST || SENTRY_TEST_CI
         return SentryLog.getOutput()
         #else
         SentryLogOutput()
+        #endif
+    }
+    
+    static func setCurrentDateProvider(_ dateProvider: SentryCurrentDateProvider) {
+        #if SENTRY_TEST || SENTRY_TEST_CI
+        SentryLog.setDateProvider(dateProvider)
         #endif
     }
 }

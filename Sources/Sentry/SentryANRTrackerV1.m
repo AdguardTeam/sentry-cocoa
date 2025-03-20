@@ -70,7 +70,8 @@ typedef NS_ENUM(NSInteger, SentryANRTrackerState) {
     NSInteger reportThreshold = 5;
     NSTimeInterval sleepInterval = self.timeoutInterval / reportThreshold;
 
-    SentryCurrentDateProvider *dateProvider = SentryDependencyContainer.sharedInstance.dateProvider;
+    id<SentryCurrentDateProvider> dateProvider
+        = SentryDependencyContainer.sharedInstance.dateProvider;
 
     // Canceling the thread can take up to sleepInterval.
     while (YES) {
@@ -155,7 +156,9 @@ typedef NS_ENUM(NSInteger, SentryANRTrackerState) {
     }
 
     for (id<SentryANRTrackerDelegate> target in targets) {
-        [target anrStopped];
+        // We intentionally don't measure the ANR duration, because V2 will replace V1, so it's not
+        // worth the effort.
+        [target anrStoppedWithResult:nil];
     }
 }
 

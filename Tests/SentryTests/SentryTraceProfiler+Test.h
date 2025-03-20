@@ -4,7 +4,6 @@
 
 #    import "SentryDefines.h"
 #    import "SentryTraceProfiler.h"
-#    import <Foundation/Foundation.h>
 
 @class SentryProfiler;
 
@@ -12,7 +11,7 @@ SENTRY_EXTERN NSTimer *_Nullable _sentry_threadUnsafe_traceProfileTimeoutTimer;
 
 @interface SentryTraceProfiler ()
 
-#    if defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#    if defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 
 + (SentryProfiler *_Nullable)getCurrentProfiler;
 
@@ -30,7 +29,7 @@ SENTRY_EXTERN NSTimer *_Nullable _sentry_threadUnsafe_traceProfileTimeoutTimer;
  */
 + (NSUInteger)currentProfiledTracers;
 
-#    endif // defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#    endif // defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 
 @end
 

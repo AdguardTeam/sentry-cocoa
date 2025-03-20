@@ -1,3 +1,4 @@
+@testable import Sentry
 import XCTest
 
 @available(*, deprecated)
@@ -73,6 +74,32 @@ class SentryUserTests: XCTestCase {
         XCTAssertNil(actual["id"] as? String)
     }
     
+    func testDecode_WithAllProperties() throws {
+        // Arrange
+        let user = TestData.user
+        let actual = user.serialize()
+        let data = try XCTUnwrap(SentrySerialization.data(withJSONObject: actual))
+        
+        // Act
+        let decoded = decodeFromJSONData(jsonData: data) as User?
+        
+        // Assert
+        XCTAssertEqual(user, decoded)
+    }
+
+    func testDecode_WithAllPropertiesNil() throws {
+        // Arrange
+        let user = User()
+        let actual = user.serialize()
+        let data = try XCTUnwrap(SentrySerialization.data(withJSONObject: actual))
+        
+        // Act
+        let decoded = decodeFromJSONData(jsonData: data) as User?
+        
+        // Assert
+        XCTAssertEqual(user, decoded)
+    }
+    
     func testHash() {
         XCTAssertEqual(TestData.user.hash(), TestData.user.hash())
         
@@ -105,7 +132,7 @@ class SentryUserTests: XCTestCase {
         try testIsNotEqual { user in user.data?.removeAll() }
     }
     
-    func testIsNotEqual(block: (User) -> Void ) throws {
+    private func testIsNotEqual(block: (User) -> Void ) throws {
         let user = try XCTUnwrap(TestData.user.copy() as? User)
         block(user)
         XCTAssertNotEqual(TestData.user, user)

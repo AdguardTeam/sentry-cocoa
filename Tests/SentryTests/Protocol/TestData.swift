@@ -14,6 +14,7 @@ class TestData {
     }
     static let sdk = ["name": SentryMeta.sdkName, "version": SentryMeta.versionString]
     static let context: [String: [String: Any]] = ["context": ["c": "a", "date": timestamp]]
+    static let traceContext: [String: [String: Any]] = ["trace": ["trace_id": "1234567890", "span_id": "1234567890"]]
     
     static let malformedURLString = "http://example.com:-80/"
     
@@ -41,7 +42,7 @@ class TestData {
         event.logger = "logger"
         event.message = SentryMessage(formatted: "message")
         event.modules = ["module": "1"]
-        event.platform = "Apple"
+        event.platform = SentryPlatformName
         event.releaseName = SentryMeta.versionString
         event.sdk = sdk
         event.serverName = "serverName"
@@ -296,9 +297,12 @@ class TestData {
         crumb2.message = "Crumb 2"
         scope.addBreadcrumb(crumb2)
         
+        scope.span = nil
+        
         return scope
     }
     
+    @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback.")
     static var userFeedback: UserFeedback {
         let userFeedback = UserFeedback(eventId: SentryId())
         userFeedback.comments = "It doesn't really"
@@ -306,6 +310,8 @@ class TestData {
         userFeedback.name = "John Me"
         return userFeedback
     }
+    
+    static var feedback = SentryFeedback(message: "It doesn't really", name: "John Me", email: "john@me.com", associatedEventId: SentryId())
     
     static func setContext(_ scope: Scope) {
         scope.setContext(value: TestData.context["context"]!, key: "context")

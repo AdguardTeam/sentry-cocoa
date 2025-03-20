@@ -40,9 +40,9 @@
 @property (nonatomic, strong) SentryDispatchQueueWrapper *dispatchQueue;
 @property (nonatomic, strong) dispatch_group_t dispatchGroup;
 
-#if defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#if defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 @property (nullable, nonatomic, strong) void (^startFlushCallback)(void);
-#endif // defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#endif // defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 
 /**
  * Relay expects the discarded events split by data category and reason; see
@@ -124,7 +124,7 @@
     envelope = [self.envelopeRateLimit removeRateLimitedItems:envelope];
 
     if (envelope.items.count == 0) {
-        SENTRY_LOG_DEBUG(@"RateLimit is active for all envelope items.");
+        SENTRY_LOG_WARN(@"RateLimit is active for all envelope items.");
         return;
     }
 
@@ -144,6 +144,11 @@
         }
         [weakSelf sendAllCachedEnvelopes];
     }];
+}
+
+- (void)storeEnvelope:(SentryEnvelope *)envelope
+{
+    [self.fileManager storeEnvelope:envelope];
 }
 
 - (void)recordLostEvent:(SentryDataCategory)category reason:(SentryDiscardReason)reason
@@ -176,12 +181,12 @@
     }
 }
 
-#if defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#if defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 - (void)setStartFlushCallback:(void (^)(void))callback
 {
     _startFlushCallback = callback;
 }
-#endif // defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#endif // defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
 
 - (SentryFlushResult)flush:(NSTimeInterval)timeout
 {
@@ -201,11 +206,11 @@
 
         _isFlushing = YES;
         dispatch_group_enter(self.dispatchGroup);
-#if defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#if defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
         if (self.startFlushCallback != nil) {
             self.startFlushCallback();
         }
-#endif // defined(TEST) || defined(TESTCI) || defined(DEBUG)
+#endif // defined(SENTRY_TEST) || defined(SENTRY_TEST_CI) || defined(DEBUG)
     }
 
     // We are waiting for the dispatch group below, which we leave in finished sending. As
@@ -232,6 +237,8 @@
 - (void)envelopeItemDropped:(SentryEnvelopeItem *)envelopeItem
                withCategory:(SentryDataCategory)dataCategory;
 {
+    SENTRY_LOG_WARN(@"Envelope item dropped due to exceeding rate limit. Category: %@",
+        nameForSentryDataCategory(dataCategory));
     [self recordLostEvent:dataCategory reason:kSentryDiscardReasonRateLimitBackoff];
     [self recordLostSpans:envelopeItem reason:kSentryDiscardReasonRateLimitBackoff];
 }
@@ -282,8 +289,12 @@
     SENTRY_LOG_DEBUG(@"sendAllCachedEnvelopes start.");
 
     @synchronized(self) {
-        if (self.isSending || ![self.requestManager isReady]) {
+        if (self.isSending) {
             SENTRY_LOG_DEBUG(@"Already sending.");
+            return;
+        }
+        if (![self.requestManager isReady]) {
+            SENTRY_LOG_DEBUG(@"Request manager not ready.");
             return;
         }
         self.isSending = YES;
@@ -382,14 +393,22 @@
                 [weakSelf recordLostEventFor:envelope.items];
             }
 
-            if (nil != response) {
-                SENTRY_LOG_DEBUG(@"Envelope sent successfully!");
-                [weakSelf.rateLimits update:response];
-                [weakSelf deleteEnvelopeAndSendNext:envelopePath];
-            } else {
+            if (response == nil) {
                 SENTRY_LOG_DEBUG(@"No internet connection.");
                 [weakSelf finishedSending];
+                return;
             }
+
+            [weakSelf.rateLimits update:response];
+
+            if (response.statusCode == 200) {
+                SENTRY_LOG_DEBUG(@"Envelope sent successfully!");
+                [weakSelf deleteEnvelopeAndSendNext:envelopePath];
+                return;
+            }
+
+            SENTRY_LOG_DEBUG(@"Received non-200 response code: %li", (long)response.statusCode);
+            [weakSelf finishedSending];
         }];
 }
 

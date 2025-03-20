@@ -2,10 +2,10 @@
 
 #if SENTRY_HAS_UIKIT
 
+#    import "SentrySpanOperation.h"
 #    import "SentrySwizzleWrapper.h"
 #    import <SentryDependencyContainer.h>
 #    import <SentryLog.h>
-#    import <SentrySpanOperations.h>
 #    import <SentryUIEventTrackerMode.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -19,12 +19,16 @@ static NSString *const SentryUIEventTrackerSwizzleSendAction
 
 @end
 
-@implementation SentryUIEventTracker
+@implementation SentryUIEventTracker {
+    BOOL _reportAccessibilityIdentifier;
+}
 
 - (instancetype)initWithMode:(id<SentryUIEventTrackerMode>)mode
+    reportAccessibilityIdentifier:(BOOL)report
 {
     if (self = [super init]) {
         self.uiEventTrackerMode = mode;
+        _reportAccessibilityIdentifier = report;
     }
     return self;
 }
@@ -73,7 +77,7 @@ static NSString *const SentryUIEventTrackerSwizzleSendAction
     NSString *operation = [self getOperation:sender];
 
     NSString *accessibilityIdentifier = nil;
-    if ([[sender class] isSubclassOfClass:[UIView class]]) {
+    if (_reportAccessibilityIdentifier && [[sender class] isSubclassOfClass:[UIView class]]) {
         UIView *view = sender;
         accessibilityIdentifier = view.accessibilityIdentifier;
     }
@@ -96,10 +100,10 @@ static NSString *const SentryUIEventTrackerSwizzleSendAction
         [senderClass isSubclassOfClass:[UIBarButtonItem class]] ||
         [senderClass isSubclassOfClass:[UISegmentedControl class]] ||
         [senderClass isSubclassOfClass:[UIPageControl class]]) {
-        return SentrySpanOperationUIActionClick;
+        return SentrySpanOperationUiActionClick;
     }
 
-    return SentrySpanOperationUIAction;
+    return SentrySpanOperationUiAction;
 }
 
 /**
@@ -128,10 +132,10 @@ static NSString *const SentryUIEventTrackerSwizzleSendAction
 
 + (BOOL)isUIEventOperation:(NSString *)operation
 {
-    if ([operation isEqualToString:SentrySpanOperationUIAction]) {
+    if ([operation isEqualToString:SentrySpanOperationUiAction]) {
         return YES;
     }
-    if ([operation isEqualToString:SentrySpanOperationUIActionClick]) {
+    if ([operation isEqualToString:SentrySpanOperationUiActionClick]) {
         return YES;
     }
     return NO;

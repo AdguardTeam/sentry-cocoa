@@ -6,8 +6,14 @@ class SentryLog: NSObject {
     
     static private(set) var isDebug = true
     static private(set) var diagnosticLevel = SentryLevel.error
+
+    /**
+     * Threshold log level to always log, regardless of the current configuration
+     */
+    static let alwaysLevel = SentryLevel.fatal
     private static var logOutput: SentryLogOutputProtocol = SentryLogOutput()
     private static var logConfigureLock = NSLock()
+    private static var dateProvider: SentryCurrentDateProvider = SentryDefaultCurrentDateProvider()
 
     @objc
     static func configure(_ isDebug: Bool, diagnosticLevel: SentryLevel) {
@@ -15,13 +21,19 @@ class SentryLog: NSObject {
             self.isDebug = isDebug
             self.diagnosticLevel = diagnosticLevel
         }
-        sentry_initializeAsyncLogFile()
+        SentryAsyncLogWrapper.initializeAsyncLogFile()
     }
     
     @objc
     static func log(message: String, andLevel level: SentryLevel) {
         guard willLog(atLevel: level) else { return }
-        logOutput.log("[Sentry] [\(level)] \(message)")
+        
+        // We use the timeIntervalSinceReferenceDate because date format is
+        // expensive and we only care about the time difference between the
+        // log messages. We don't use system uptime because of privacy concerns
+        // see: NSPrivacyAccessedAPICategorySystemBootTime.
+        let time = self.dateProvider.date().timeIntervalSince1970
+        logOutput.log("[Sentry] [\(level)] [timeIntervalSince1970:\(time)] \(message)")
     }
 
     /**
@@ -30,10 +42,17 @@ class SentryLog: NSObject {
      */
     @objc
     static func willLog(atLevel level: SentryLevel) -> Bool {
-        return isDebug && level != .none && level.rawValue >= diagnosticLevel.rawValue
+        if level == .none {
+            return false
+        }
+        if level.rawValue >= alwaysLevel.rawValue {
+            return true
+        }
+        return isDebug && level.rawValue >= diagnosticLevel.rawValue
     }
  
-    //ADGUARD: #if TEST || TESTCI
+    //ADGUARD: #if SENTRY_TEST || SENTRY_TEST_CI
+    
     @objc
     static func setOutput(_ output: SentryLogOutputProtocol) {
         logOutput = output
@@ -42,6 +61,10 @@ class SentryLog: NSObject {
     @objc
     static func getOutput() -> SentryLogOutputProtocol {
         return logOutput
+    }
+    
+    static func setDateProvider(_ dateProvider: SentryCurrentDateProvider) {
+        self.dateProvider = dateProvider
     }
     
     //ADGUARD: #endif

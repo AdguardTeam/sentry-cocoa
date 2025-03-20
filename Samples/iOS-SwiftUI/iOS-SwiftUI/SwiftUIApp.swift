@@ -10,13 +10,17 @@ struct SwiftUIApp: App {
             options.debug = true
             options.tracesSampleRate = 1.0
             options.profilesSampleRate = 1.0
-            options.experimental.sessionReplay.sessionSampleRate = 1.0
-            options.experimental.sessionReplay.maskAllImages = false
-            options.experimental.sessionReplay.maskAllText = false
+            options.sessionReplay.sessionSampleRate = 1.0
             options.initialScope = { scope in
                 scope.injectGitInformation()
                 return scope
             }
+
+            // Experimental features
+            options.experimental.enableFileManagerSwizzling = true
+            options.sessionReplay.enableExperimentalViewRenderer = true
+            // Disable the fast view renderering, because we noticed parts (like the tab bar) are not rendered correctly
+            options.sessionReplay.enableFastViewRendering = false
         }
     }
     

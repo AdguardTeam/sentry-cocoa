@@ -59,6 +59,8 @@ NS_ASSUME_NONNULL_BEGIN
     NSObject *_spanLock;
 }
 
+@synthesize span = _span;
+
 #pragma mark Initializer
 
 - (instancetype)initWithMaxBreadcrumbs:(NSInteger)maxBreadcrumbs
@@ -97,7 +99,7 @@ NS_ASSUME_NONNULL_BEGIN
         [_fingerprintArray addObjectsFromArray:[scope fingerprints]];
         [_attachmentArray addObjectsFromArray:[scope attachments]];
 
-        self.propagationContext = [[SentryPropagationContext alloc] init];
+        self.propagationContext = scope.propagationContext;
         self.maxBreadcrumbs = scope.maxBreadcrumbs;
         self.userObject = scope.userObject.copy;
         self.distString = scope.distString;
@@ -133,8 +135,10 @@ NS_ASSUME_NONNULL_BEGIN
 
         _currentBreadcrumbIndex = (_currentBreadcrumbIndex + 1) % _maxBreadcrumbs;
 
+        // Serializing is expensive. Only do it once.
+        NSDictionary<NSString *, id> *serializedBreadcrumb = [crumb serialize];
         for (id<SentryScopeObserver> observer in self.observers) {
-            [observer addSerializedBreadcrumb:[crumb serialize]];
+            [observer addSerializedBreadcrumb:serializedBreadcrumb];
         }
     }
 }
@@ -143,15 +147,23 @@ NS_ASSUME_NONNULL_BEGIN
 {
     @synchronized(_spanLock) {
         _span = span;
+
+        for (id<SentryScopeObserver> observer in self.observers) {
+            [observer setTraceContext:[self buildTraceContext:span]];
+        }
+    }
+}
+
+- (nullable id<SentrySpan>)span
+{
+    @synchronized(_spanLock) {
+        return _span;
     }
 }
 
 - (void)useSpan:(SentrySpanCallback)callback
 {
-    id<SentrySpan> localSpan = nil;
-    @synchronized(_spanLock) {
-        localSpan = _span;
-    }
+    id<SentrySpan> localSpan = [self span];
     callback(localSpan);
 }
 
@@ -236,7 +248,7 @@ NS_ASSUME_NONNULL_BEGIN
         [_contextDictionary removeObjectForKey:key];
 
         for (id<SentryScopeObserver> observer in self.observers) {
-            [observer setExtras:_contextDictionary];
+            [observer setContext:_contextDictionary];
         }
     }
 }
@@ -453,9 +465,23 @@ NS_ASSUME_NONNULL_BEGIN
     if (self.extras.count > 0) {
         [serializedData setValue:[self extras] forKey:@"extra"];
     }
-    if (self.context.count > 0) {
-        [serializedData setValue:[self context] forKey:@"context"];
+
+    NSDictionary *traceContext = nil;
+    id<SentrySpan> span = nil;
+
+    if (self.span != nil) {
+        @synchronized(_spanLock) {
+            span = self.span;
+        }
     }
+    traceContext = [self buildTraceContext:span];
+    serializedData[@"traceContext"] = traceContext;
+
+    NSDictionary *context = [self context];
+    if (context.count > 0) {
+        [serializedData setValue:context forKey:@"context"];
+    }
+
     [serializedData setValue:[self.userObject serialize] forKey:@"user"];
     [serializedData setValue:self.distString forKey:@"dist"];
     [serializedData setValue:self.environmentString forKey:@"environment"];
@@ -505,6 +531,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (SentryEvent *__nullable)applyToEvent:(SentryEvent *)event
                           maxBreadcrumb:(NSUInteger)maxBreadcrumbs
 {
+    if (event.isFatalEvent) {
+        SENTRY_LOG_WARN(@"Won't apply scope to a crash event. This is not allowed as crash "
+                        @"events are from a previous run of the app and the current scope might "
+                        @"have different data than the scope that was active during the crash.");
+        return event;
+    }
+
     if (event.tags == nil) {
         event.tags = [self tags];
     } else {
@@ -559,20 +592,9 @@ NS_ASSUME_NONNULL_BEGIN
         event.level = level;
     }
 
-    NSMutableDictionary *newContext = [self context].mutableCopy;
-    if (event.context != nil) {
-        [SentryDictionary mergeEntriesFromDictionary:event.context intoDictionary:newContext];
-    }
-
-    // Don't add the trace context of a current trace to a crash event because crash events are from
-    // a previous run.
-    if (event.isCrashEvent) {
-        event.context = newContext;
-        return event;
-    }
+    id<SentrySpan> span;
 
     if (self.span != nil) {
-        id<SentrySpan> span;
         @synchronized(_spanLock) {
             span = self.span;
         }
@@ -583,14 +605,15 @@ NS_ASSUME_NONNULL_BEGIN
                 [span isKindOfClass:[SentryTracer class]]) {
                 event.transaction = [[(SentryTracer *)span transactionContext] name];
             }
-            newContext[@"trace"] = [span serialize];
         }
     }
 
-    if (newContext[@"trace"] == nil) {
-        // If this is an error event we need to add the distributed trace context.
-        newContext[@"trace"] = [self.propagationContext traceContextForEvent];
+    NSMutableDictionary *newContext = [self context].mutableCopy;
+    if (event.context != nil) {
+        [SentryDictionary mergeEntriesFromDictionary:event.context intoDictionary:newContext];
     }
+
+    newContext[@"trace"] = [self buildTraceContext:span];
 
     event.context = newContext;
     return event;
@@ -599,6 +622,15 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)addObserver:(id<SentryScopeObserver>)observer
 {
     [self.observers addObject:observer];
+}
+
+- (NSDictionary *)buildTraceContext:(nullable id<SentrySpan>)span
+{
+    if (span != nil) {
+        return [span serialize];
+    } else {
+        return [self.propagationContext traceContextForEvent];
+    }
 }
 
 @end

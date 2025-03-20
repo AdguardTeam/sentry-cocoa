@@ -10,7 +10,6 @@ class SentryHttpTransportTests: XCTestCase {
     private class Fixture {
         let event: Event
         let eventEnvelope: SentryEnvelope
-        let eventRequest: SentryNSURLRequest
         let attachmentEnvelopeItem: SentryEnvelopeItem
         let eventWithAttachmentRequest: SentryNSURLRequest
         let eventWithSessionEnvelope: SentryEnvelope
@@ -35,9 +34,16 @@ class SentryHttpTransportTests: XCTestCase {
 #endif // !os(watchOS)
 
         let flushTimeout: TimeInterval = 2.0
-
-        let userFeedback: UserFeedback
-        let userFeedbackRequest: SentryNSURLRequest
+        
+        @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback.")
+        let userFeedback: UserFeedback = TestData.userFeedback
+        let feedback: SentryFeedback = TestData.feedback
+        @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback. There is currently no envelope initializer accepting a SentryFeedback; the envelope is currently built directly in -[SentryClient captureFeedback:withScope:] and sent to -[SentryTransportAdapter sendEvent:traceContext:attachments:additionalEnvelopeItems:].")
+        lazy var userFeedbackRequest: SentryNSURLRequest = {
+            let userFeedbackEnvelope = SentryEnvelope(userFeedback: userFeedback)
+            userFeedbackEnvelope.header.sentAt = SentryDependencyContainer.sharedInstance().dateProvider.date()
+            return buildRequest(userFeedbackEnvelope)
+        }()
         
         let clientReport: SentryClientReport
         let clientReportEnvelope: SentryEnvelope
@@ -53,8 +59,6 @@ class SentryHttpTransportTests: XCTestCase {
 
             event = Event()
             event.message = SentryMessage(formatted: "Some message")
-            
-            eventRequest = buildRequest(SentryEnvelope(event: event))
             
             attachmentEnvelopeItem = SentryEnvelopeItem(attachment: TestData.dataAttachment, maxAttachmentSize: 5 * 1_024 * 1_024)!
             
@@ -81,11 +85,6 @@ class SentryHttpTransportTests: XCTestCase {
             
             let currentDate = TestCurrentDateProvider()
             rateLimits = DefaultRateLimits(retryAfterHeaderParser: RetryAfterHeaderParser(httpDateParser: HttpDateParser(), currentDateProvider: currentDate), andRateLimitParser: RateLimitParser(currentDateProvider: currentDate), currentDateProvider: currentDate)
-
-            userFeedback = TestData.userFeedback
-            let userFeedbackEnvelope = SentryEnvelope(userFeedback: userFeedback)
-            userFeedbackEnvelope.header.sentAt = SentryDependencyContainer.sharedInstance().dateProvider.date()
-            userFeedbackRequest = buildRequest(userFeedbackEnvelope)
             
             let beforeSendTransaction = SentryDiscardedEvent(reason: .beforeSend, category: .transaction, quantity: 2)
             let sampleRateTransaction = SentryDiscardedEvent(reason: .sampleRate, category: .transaction, quantity: 1)
@@ -109,13 +108,20 @@ class SentryHttpTransportTests: XCTestCase {
         
         func getTransactionEnvelope() -> SentryEnvelope {
             let tracer = SentryTracer(transactionContext: TransactionContext(name: "SomeTransaction", operation: "SomeOperation"), hub: nil)
+            
+            let child1 = tracer.startChild(operation: "child1")
+            let child2 = tracer.startChild(operation: "child2")
+            let child3 = tracer.startChild(operation: "child3")
+            
+            child1.finish()
+            child2.finish()
+            child3.finish()
+            
+            tracer.finish()
+            
             let transaction = Transaction(
                 trace: tracer,
-                children: [
-                    tracer.startChild(operation: "child1"),
-                    tracer.startChild(operation: "child2"),
-                    tracer.startChild(operation: "child3")
-                ]
+                children: [child1, child2, child3]
             )
             
             let transactionEnvelope = SentryEnvelope(id: transaction.eventId, items: [SentryEnvelopeItem(event: transaction), attachmentEnvelopeItem])
@@ -142,11 +148,11 @@ class SentryHttpTransportTests: XCTestCase {
         }
     }
 
-    class func dsn() throws -> SentryDsn {
+    private class func dsn() throws -> SentryDsn {
         try TestConstants.dsn(username: "SentryHttpTransportTests")
     }
 
-    class func buildRequest(_ envelope: SentryEnvelope) -> SentryNSURLRequest {
+    private class func buildRequest(_ envelope: SentryEnvelope) -> SentryNSURLRequest {
         let envelopeData = try! XCTUnwrap(SentrySerialization.data(with: envelope))
         return try! SentryNSURLRequest(envelopeRequestWith: dsn(), andData: envelopeData)
     }
@@ -209,7 +215,7 @@ class SentryHttpTransportTests: XCTestCase {
         assertRequestsSent(requestCount: 1)
         assertEnvelopesStored(envelopeCount: 0)
 
-        assertEventAndSesionAreSentInOneEnvelope()
+        assertEventAndSessionAreSentInOneEnvelope()
     }
     
     func testSendEventWithFaultyNSUrlRequest() {
@@ -219,6 +225,7 @@ class SentryHttpTransportTests: XCTestCase {
         assertRequestsSent(requestCount: 1)
     }
     
+    @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback. There is currently no envelope initializer accepting a SentryFeedback; the envelope is currently built directly in -[SentryClient captureFeedback:withScope:] and sent to -[SentryTransportAdapter sendEvent:traceContext:attachments:additionalEnvelopeItems:]. This test case can be removed in favor of SentryClientTests.testCaptureFeedback")
     func testSendUserFeedback() {
         let envelope = SentryEnvelope(userFeedback: fixture.userFeedback)
         sut.send(envelope: envelope)
@@ -672,6 +679,36 @@ class SentryHttpTransportTests: XCTestCase {
         assertRequestsSent(requestCount: 1)
     }
     
+    func testSendEnvelope_HTTPResponse199_DoesNotDeleteEnvelopeAndStopsSending() throws {
+        // Arrange
+        let sentryUrl = try XCTUnwrap(URL(string: "https://sentry.io"))
+        let response = HTTPURLResponse(url: sentryUrl, statusCode: 199, httpVersion: nil, headerFields: nil)
+        
+        fixture.requestManager.returnResponse(response: response)
+        
+        // Act
+        sendEvent()
+        
+        // Assert
+        assertEnvelopesStored(envelopeCount: 1)
+        assertRequestsSent(requestCount: 1)
+    }
+    
+    func testSendEnvelope_HTTPResponse201_DoesNotDeleteEnvelopeAndStopsSending() throws {
+        // Arrange
+        let sentryUrl = try XCTUnwrap(URL(string: "https://sentry.io"))
+        let response = HTTPURLResponse(url: sentryUrl, statusCode: 201, httpVersion: nil, headerFields: nil)
+        
+        fixture.requestManager.returnResponse(response: response)
+        
+        // Act
+        sendEvent()
+        
+        // Assert
+        assertEnvelopesStored(envelopeCount: 1)
+        assertRequestsSent(requestCount: 1)
+    }
+    
     func testDeallocated_CachedEnvelopesNotAllSent() throws {
         givenNoInternetConnection()
         givenCachedEvents(amount: 10)
@@ -795,7 +832,7 @@ class SentryHttpTransportTests: XCTestCase {
         givenCachedEvents(amount: 30)
         fixture.requestManager.responseDelay = fixture.flushTimeout + 0.2
         
-        SentryLog.withOutLogs {
+        SentryLog.withoutLogs {
             let beforeFlush = getAbsoluteTime()
             let result = sut.flush(fixture.flushTimeout)
             let blockingDuration = getDurationNs(beforeFlush, getAbsoluteTime()).toTimeInterval()
@@ -810,7 +847,7 @@ class SentryHttpTransportTests: XCTestCase {
     func testFlush_BlocksCallingThread_FinishesFlushingWhenSent() {
         givenCachedEvents(amount: 1)
         
-        SentryLog.withOutLogs {
+        SentryLog.withoutLogs {
             
             let beforeFlush = getAbsoluteTime()
             XCTAssertEqual(.success, sut.flush(fixture.flushTimeout), "Flush should not time out.")
@@ -823,7 +860,7 @@ class SentryHttpTransportTests: XCTestCase {
     func testFlush_CalledSequentially_BlocksTwice() {
         givenCachedEvents()
         
-        SentryLog.withOutLogs {
+        SentryLog.withoutLogs {
             
             let beforeFlush = getAbsoluteTime()
             XCTAssertEqual(.success, sut.flush(fixture.flushTimeout), "Flush should not time out.")
@@ -841,7 +878,7 @@ class SentryHttpTransportTests: XCTestCase {
         var blockingDurationSum: TimeInterval = 0.0
         let flushInvocations = 100
         
-        SentryLog.withOutLogs {
+        SentryLog.withoutLogs {
             
             for _ in  0..<flushInvocations {
                 let beforeFlush = getAbsoluteTime()
@@ -868,7 +905,7 @@ class SentryHttpTransportTests: XCTestCase {
         var blockingDurationSum: TimeInterval = 0.0
         let flushInvocations = 100
         
-        SentryLog.withOutLogs {
+        SentryLog.withoutLogs {
             
             for _ in  0..<flushInvocations {
                 let beforeFlush = getAbsoluteTime()
@@ -886,7 +923,7 @@ class SentryHttpTransportTests: XCTestCase {
     func testFlush_CallingFlushDirectlyAfterCapture_Flushes() {
         let sut = fixture.getSut(dispatchQueueWrapper: SentryDispatchQueueWrapper())
         
-        SentryLog.withOutLogs {
+        SentryLog.withoutLogs {
             
             for _ in 0..<10 {
                 sut.send(envelope: fixture.eventEnvelope)
@@ -899,7 +936,7 @@ class SentryHttpTransportTests: XCTestCase {
     }
     
     func testFlush_CalledMultipleTimes_ImmediatelyReturnsFalse() {
-        SentryLog.withOutLogs {
+        SentryLog.withoutLogs {
             
             givenCachedEvents(amount: 30)
             
@@ -1021,7 +1058,7 @@ class SentryHttpTransportTests: XCTestCase {
         }
     }
 
-    func givenFirstRateLimitGetsActiveWithSecondResponse() {
+    private func givenFirstRateLimitGetsActiveWithSecondResponse() {
         var i = -1
         fixture.requestManager.returnResponse { () -> HTTPURLResponse? in
             i += 1
@@ -1079,7 +1116,7 @@ class SentryHttpTransportTests: XCTestCase {
         XCTAssertEqual(fixture.eventWithAttachmentRequest.httpBody, actualEventRequest?.httpBody, "Event was not sent as envelope.")
     }
 
-    private func assertEventAndSesionAreSentInOneEnvelope() {
+    private func assertEventAndSessionAreSentInOneEnvelope() {
         let actualEventRequest = fixture.requestManager.requests.last
         XCTAssertEqual(fixture.eventWithSessionRequest.httpBody, actualEventRequest?.httpBody, "Request for event with session is faulty.")
     }

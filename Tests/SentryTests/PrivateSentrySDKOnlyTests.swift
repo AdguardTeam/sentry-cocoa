@@ -1,3 +1,4 @@
+@testable import Sentry
 import SentryTestUtils
 import XCTest
 
@@ -6,6 +7,11 @@ class PrivateSentrySDKOnlyTests: XCTestCase {
     override func tearDown() {
         super.tearDown()
         clearTestState()
+    }
+
+    override func setUp() {
+        SentrySdkPackage.resetPackageManager()
+        SentryExtraPackages.clear()
     }
 
     func testStoreEnvelope() {
@@ -247,6 +253,19 @@ class PrivateSentrySDKOnlyTests: XCTestCase {
       * Smoke Tests profiling via PrivateSentrySDKOnly. Actual profiling unit tests are done elsewhere.
      */
     func testProfilingStartAndCollect() throws {
+        let image = DebugMeta()
+        image.name = "sentrytest"
+        image.imageAddress = "0x0000000105705000"
+        image.imageVmAddress = "0x0000000105705000"
+        image.codeFile = "codeFile"
+        image.debugID = "debugID"
+        image.imageSize = 100
+        image.type = "macho"
+        
+        let debugImageProvider = TestDebugImageProvider()
+        debugImageProvider.debugImages = [image]
+        SentryDependencyContainer.sharedInstance().debugImageProvider = debugImageProvider
+        
         if sentry_threadSanitizerIsPresent() {
             throw XCTSkip("Profiler does not run if thread sanitizer is attached.")
         }
@@ -263,7 +282,19 @@ class PrivateSentrySDKOnlyTests: XCTestCase {
         let payload = PrivateSentrySDKOnly.collectProfileBetween(startTime, and: startTime + 200_000_000, forTrace: traceIdA)
         XCTAssertNotNil(payload)
         XCTAssertEqual(payload?["platform"] as? String, "cocoa")
-        XCTAssertNotNil(payload?["debug_meta"])
+        
+        XCTAssertEqual(1, debugImageProvider.getDebugImagesFromCacheInvocations.count, "You must retrieve debug images from cache.")
+        let debugMeta = try XCTUnwrap(payload?["debug_meta"] as? [String: Any])
+        let images = try XCTUnwrap(debugMeta["images"] as? [[String: Any]])
+        let debugImage = try XCTUnwrap(images.first)
+        XCTAssertEqual(debugImage["name"] as? String, image.name)
+        XCTAssertEqual(debugImage["image_addr"] as? String, image.imageAddress)
+        XCTAssertEqual(debugImage["image_vmaddr"] as? String, image.imageVmAddress)
+        XCTAssertEqual(debugImage["code_file"] as? String, image.codeFile)
+        XCTAssertEqual(debugImage["debug_id"] as? String, image.debugID)
+        XCTAssertEqual(debugImage["image_size"] as? NSNumber, image.imageSize)
+        XCTAssertEqual(debugImage["type"] as? String, image.type)
+        
         XCTAssertNotNil(payload?["device"])
         XCTAssertNotNil(payload?["profile_id"])
         let profile = payload?["profile"] as? NSDictionary
@@ -369,7 +400,56 @@ class PrivateSentrySDKOnlyTests: XCTestCase {
         PrivateSentrySDKOnly.addReplayRedactClasses([UILabel.self])
     }
 
-    let VALID_REPLAY_ID = "0eac7ab503354dd5819b03e263627a29"
+    func testAddIgnoreContainer() throws {
+        class IgnoreContainer: UIView {}
+
+        SentrySDK.start {
+            $0.experimental.sessionReplay = SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1)
+            $0.setIntegrations([SentrySessionReplayIntegration.self])
+        }
+
+        PrivateSentrySDKOnly.setIgnoreContainerClass(IgnoreContainer.self)
+
+        let replayIntegration = try getFirstIntegrationAsReplay()
+
+        let redactBuilder = replayIntegration.viewPhotographer.getRedactBuild()
+        XCTAssertTrue(redactBuilder.isIgnoreContainerClassTestOnly(IgnoreContainer.self))
+    }
+
+    func testAddRedactContainer() throws {
+        class RedactContainer: UIView {}
+
+        SentrySDK.start {
+            $0.experimental.sessionReplay = SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1)
+            $0.setIntegrations([SentrySessionReplayIntegration.self])
+        }
+
+        PrivateSentrySDKOnly.setRedactContainerClass(RedactContainer.self)
+
+        let replayIntegration = try getFirstIntegrationAsReplay()
+
+        let redactBuilder = replayIntegration.viewPhotographer.getRedactBuild()
+        XCTAssertTrue(redactBuilder.isRedactContainerClassTestOnly(RedactContainer.self))
+    }
+
+    func testAddExtraSdkPackages() {
+        PrivateSentrySDKOnly.addSdkPackage("package1", version: "version1")
+        PrivateSentrySDKOnly.addSdkPackage("package2", version: "version2")
+
+        XCTAssertEqual(
+            SentrySdkInfo.global().packages,
+            [
+                ["name": "package1", "version": "version1"],
+                ["name": "package2", "version": "version2"]
+            ]
+        )
+    }
+
+    private func getFirstIntegrationAsReplay() throws -> SentrySessionReplayIntegration {
+        return try XCTUnwrap(SentrySDK.currentHub().installedIntegrations().first as? SentrySessionReplayIntegration)
+    }
+
+    private let VALID_REPLAY_ID = "0eac7ab503354dd5819b03e263627a29"
 
     private class TestSentrySessionReplayIntegration: SentrySessionReplayIntegration {
         static var captureReplayCalledTimes = 0
@@ -389,7 +469,7 @@ class PrivateSentrySDKOnlyTests: XCTestCase {
     }
     #endif
     
-    func getUnhandledExceptionEnvelope() -> SentryEnvelope {
+    private func getUnhandledExceptionEnvelope() -> SentryEnvelope {
         let event = Event()
         event.message = SentryMessage(formatted: "Test Event with unhandled exception")
         event.level = .error

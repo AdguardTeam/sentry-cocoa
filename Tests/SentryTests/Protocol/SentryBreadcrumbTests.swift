@@ -1,3 +1,4 @@
+@testable import Sentry
 import XCTest
 
 class SentryBreadcrumbTests: XCTestCase {
@@ -22,7 +23,6 @@ class SentryBreadcrumbTests: XCTestCase {
             breadcrumb.origin = origin
             breadcrumb.message = message
             breadcrumb.data = ["some": ["data": "data", "date": date] as [String: Any]]
-            breadcrumb.setValue(["foo": "bar"], forKey: "unknown")
         }
         
         var dateAs8601String: String {
@@ -40,8 +40,7 @@ class SentryBreadcrumbTests: XCTestCase {
             "type": fixture.type,
             "origin": fixture.origin,
             "message": fixture.message,
-            "data": ["foo": "bar"],
-            "foo": "bar" // Unknown
+            "data": ["foo": "bar"]
         ]
         let breadcrumb = PrivateSentrySDKOnly.breadcrumb(with: dict)
         
@@ -52,7 +51,6 @@ class SentryBreadcrumbTests: XCTestCase {
         XCTAssertEqual(breadcrumb.origin, fixture.origin)
         XCTAssertEqual(breadcrumb.message, fixture.message)
         XCTAssertEqual(breadcrumb.data as? [String: String], ["foo": "bar"])
-        XCTAssertEqual(breadcrumb.value(forKey: "unknown") as? NSDictionary, ["foo": "bar"])
     }
     
     func testHash() {
@@ -96,10 +94,9 @@ class SentryBreadcrumbTests: XCTestCase {
         testIsNotEqual { breadcrumb in breadcrumb.origin = "" }
         testIsNotEqual { breadcrumb in breadcrumb.message = "" }
         testIsNotEqual { breadcrumb in breadcrumb.data?.removeAll() }
-        testIsNotEqual { breadcrumb in breadcrumb.setValue(nil, forKey: "unknown") }
     }
     
-    func testIsNotEqual(block: (Breadcrumb) -> Void ) {
+    private func testIsNotEqual(block: (Breadcrumb) -> Void ) {
         let breadcrumb = Fixture().breadcrumb
         block(breadcrumb)
         XCTAssertNotEqual(fixture.breadcrumb, breadcrumb)
@@ -117,7 +114,6 @@ class SentryBreadcrumbTests: XCTestCase {
         crumb.origin = ""
         crumb.message = ""
         crumb.data = nil
-        crumb.setValue(nil, forKey: "unknown")
         
         XCTAssertEqual("info", actual["level"] as? String)
         XCTAssertEqual(fixture.dateAs8601String, actual["timestamp"] as? String)
@@ -126,7 +122,6 @@ class SentryBreadcrumbTests: XCTestCase {
         XCTAssertEqual(fixture.origin, actual["origin"] as? String)
         XCTAssertEqual(fixture.message, actual["message"] as? String)
         XCTAssertEqual(["some": ["data": "data", "date": fixture.dateAs8601String]], actual["data"] as? Dictionary)
-        XCTAssertEqual("bar", actual["foo"] as? String)
     }
     
     func testDescription() {
@@ -136,5 +131,42 @@ class SentryBreadcrumbTests: XCTestCase {
         let serialaziedString = NSString(format: "<SentryBreadcrumb: %p, %@>", crumb, crumb.serialize())
         
         XCTAssertEqual(serialaziedString, actual as NSString)
+    }
+    
+    func testDecode_WithAllProperties() throws {
+        // Arrange
+        let crumb = fixture.breadcrumb
+        let actual = crumb.serialize()
+        let data = try XCTUnwrap(SentrySerialization.data(withJSONObject: actual))
+        
+        // Act
+        let decoded = try XCTUnwrap(decodeFromJSONData(jsonData: data) as Breadcrumb?)
+        
+        // Assert
+        XCTAssertEqual(crumb.level, decoded.level)
+        XCTAssertEqual(crumb.category, decoded.category)
+        XCTAssertEqual(crumb.timestamp, decoded.timestamp)
+        XCTAssertEqual(crumb.type, decoded.type)
+        XCTAssertEqual(crumb.message, decoded.message)
+        
+        let crumbData = try XCTUnwrap(crumb.data as? NSDictionary)
+        let decodedData = try XCTUnwrap(decoded.data as? NSDictionary)
+
+        XCTAssertEqual(crumbData, decodedData)
+        XCTAssertEqual(crumb.origin, decoded.origin)
+    }
+
+    func testDecode_WithAllPropertiesNil() throws {
+        // Arrange
+        let crumb = Breadcrumb()
+        crumb.timestamp = fixture.date
+        let actual = crumb.serialize()
+        let data = try XCTUnwrap(SentrySerialization.data(withJSONObject: actual))
+        
+        // Act
+        let decoded = try XCTUnwrap(decodeFromJSONData(jsonData: data) as Breadcrumb?)
+        
+        // Assert
+        XCTAssertEqual(crumb, decoded)
     }
 }

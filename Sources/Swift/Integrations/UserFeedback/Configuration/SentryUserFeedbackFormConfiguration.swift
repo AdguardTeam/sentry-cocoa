@@ -1,13 +1,23 @@
 import Foundation
-#if (os(iOS) || os(tvOS)) && !SENTRY_NO_UIKIT
+#if os(iOS) && !SENTRY_NO_UIKIT
 @_implementationOnly import _SentryPrivate
 import UIKit
 
 /**
  * Settings to control the behavior and appearance of the UI form.
  */
-@objcMembers public class SentryUserFeedbackFormConfiguration: NSObject {
+@available(iOS 13.0, *)
+@objcMembers
+public class SentryUserFeedbackFormConfiguration: NSObject {
     // MARK: General settings
+    
+    /**
+     * Sets the email and name field text content to the values contained in the current scope's
+     * `SentryUser` instance, if any.
+     * - seealso: `- [SentrySDK setUser:]`
+     * - note: Default: `true`
+     */
+    public var useSentryUser: Bool = true
     
     /**
      * Displays the Sentry logo inside of the form.
@@ -27,45 +37,32 @@ import UIKit
      */
     public var messageLabel: String = "Description"
     
+    lazy var messageLabelContents = fullLabelText(labelText: messageLabel, required: true)
+    
     /**
      * The placeholder for the feedback description input field.
      * - note: Default: `"What's the bug? What did you expect?"`
      */
     public var messagePlaceholder: String = "What's the bug? What did you expect?"
     
-    /**
-     * The label shown next to an input field that is required.
-     * - note: Default: `"(required)"`
-     */
-    public var isRequiredLabel: String = "(required)"
+    public lazy var messageTextViewAccessibilityLabel: String = messagePlaceholder
     
     /**
-     * The message displayed after a successful feedback submission.
-     * - note: Default: `"Thank you for your report!"`
+     * The label shown next to an input field that is required.
+     * - note: Default: `"(Required)"`
      */
-    public var successMessageText: String = "Thank you for your report!"
+    public var isRequiredLabel: String = "(Required)"
     
     // MARK: Screenshots
     
     /**
-     * Allows the user to send a screenshot attachment with their feedback.
-     * - note: Default: `true`
-     */
-    public var enableScreenshot: Bool = true
-    
-    /**
-     * The label of the button to add a screenshot to the form.
-     * - note: Default: `"Add a screenshot"`
-     * - note: ignored if `enableScreenshot` is `false`.`
-     */
-    public var addScreenshotButtonLabel: String = "Add a screenshot"
-    
-    /**
      * The label of the button to remove the screenshot from the form.
      * - note: Default: `"Remove screenshot"`
-     * - note: ignored if `enableScreenshot` is `false`.
+     * - note: ignored if `SentryUserFeedbackConfiguration.showFormForScreenshots` is `false`.
      */
     public var removeScreenshotButtonLabel: String = "Remove screenshot"
+    
+    public lazy var removeScreenshotButtonAccessibilityLabel = removeScreenshotButtonLabel
     
     // MARK: Name
     
@@ -89,12 +86,16 @@ import UIKit
      */
     public var nameLabel: String = "Name"
     
+    lazy var nameLabelContents = fullLabelText(labelText: nameLabel, required: isNameRequired)
+    
     /**
      * The placeholder for the name input field.
      * - note: Default: `"Your Name"`
      * - note: ignored if `showName` is `false`.
      */
     public var namePlaceholder: String = "Your Name"
+    
+    public lazy var nameTextFieldAccessibilityLabel = namePlaceholder
     
     // MARK: Email
     
@@ -117,11 +118,15 @@ import UIKit
      */
     public var emailLabel: String = "Email"
     
+    lazy var emailLabelContents = fullLabelText(labelText: emailLabel, required: isEmailRequired)
+    
     /**
      * The placeholder for the email input field.
      * - note: Default: `"your.email@example.org"`
      */
     public var emailPlaceholder: String = "your.email@example.org"
+    
+    public lazy var emailTextFieldAccessibilityLabel = "Your email address"
     
     // MARK: Buttons
     
@@ -135,7 +140,7 @@ import UIKit
      * The accessibility label of the form's "Submit" button.
      * - note: Default: `submitButtonLabel` value
      */
-    public var submitButtonAccessibilityLabel: String?
+    public lazy var submitButtonAccessibilityLabel: String = submitButtonLabel
     
     /**
      * The label of cancel buttons used in the feedback form.
@@ -147,36 +152,11 @@ import UIKit
      * The accessibility label of the form's "Cancel" button.
      * - note: Default: `cancelButtonLabel` value
      */
-    public var cancelButtonAccessibilityLabel: String?
+    public lazy var cancelButtonAccessibilityLabel: String = cancelButtonLabel
     
-    /**
-     * The label of confirm buttons used in the feedback form.
-     * - note: Default: `"Confirm"`
-     */
-    public var confirmButtonLabel: String = "Confirm"
-    
-    /**
-     * The accessibility label of the form's "Confirm" button.
-     * - note: Default: `confirmButtonLabel` value
-     */
-    public var confirmButtonAccessibilityLabel: String?
-    
-    // MARK: Theme
-    
-    /**
-     * Builder for default/light theme overrides.
-     * - note: On iOS versions predating dark mode (≤12) this is the only theme override used. Apps
-     * running on later versions that include dark mode should also consider `darkThemeOverrides`.
-     * - note: Default: `nil`
-     */
-    public var themeOverrides: ((SentryUserFeedbackThemeConfiguration) -> Void)?
-    
-    /**
-     * Builder for dark mode theme overrides. If your app does not deploy a different theme for dark
-     * mode, assign the same builder to this property as you do for `themeOverrides`.
-     * - note: Default: `nil`
-     */
-    public var darkThemeOverrides: ((SentryUserFeedbackThemeConfiguration) -> Void)?
+    func fullLabelText(labelText: String, required: Bool) -> String {
+        required ? labelText + " " + isRequiredLabel : labelText
+    }
 }
 
-#endif // (os(iOS) || os(tvOS)) && !SENTRY_NO_UIKIT
+#endif // os(iOS) && !SENTRY_NO_UIKIT

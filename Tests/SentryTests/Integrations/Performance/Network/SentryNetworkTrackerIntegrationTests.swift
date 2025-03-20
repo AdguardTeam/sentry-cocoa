@@ -1,4 +1,4 @@
-import Sentry
+@testable import Sentry
 import SentryTestUtils
 import SwiftUI
 import XCTest
@@ -130,7 +130,7 @@ class SentryNetworkTrackerIntegrationTests: XCTestCase {
         wait(for: [expect], timeout: 5)
     }
     
-    func flaky_testWhenTaskCancelledOrSuspended_OnlyOneBreadcrumb() {
+    private func flaky_testWhenTaskCancelledOrSuspended_OnlyOneBreadcrumb() {
         startSDK()
         
         let expect = expectation(description: "Callback Expectation")
@@ -173,12 +173,12 @@ class SentryNetworkTrackerIntegrationTests: XCTestCase {
         dataTask.resume()
         wait(for: [expect], timeout: 5)
         
-        let children = Dynamic(transaction).children as [Span]?
-        
-        XCTAssertEqual(children?.count, 1) //Span was created in task resume swizzle.
-        let networkSpan = try XCTUnwrap(children?.first)
+        let children = try XCTUnwrap(Dynamic(transaction).children as [Span]?)
+
+        XCTAssertEqual(children.count, 1) //Span was created in task resume swizzle.
+        let networkSpan = try XCTUnwrap(children.first)
         XCTAssertTrue(networkSpan.isFinished) //Span was finished in task setState swizzle.
-        XCTAssertEqual(SENTRY_NETWORK_REQUEST_OPERATION, networkSpan.operation)
+        XCTAssertEqual(SentrySpanOperationNetworkRequestOperation, networkSpan.operation)
         XCTAssertEqual("GET \(SentryNetworkTrackerIntegrationTests.testBaggageURL)", networkSpan.spanDescription)
         
         XCTAssertEqual("200", networkSpan.data["http.response.status_code"] as? String)
