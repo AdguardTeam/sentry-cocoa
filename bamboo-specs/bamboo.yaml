@@ -20,8 +20,10 @@ Build Job:
         force-clean-build: 'true'
     - script: |
         bamboo-specs/scripts/setup_ssh.sh
-    - script: |
-        bamboo-specs/scripts/build.sh
+    - script:
+      description: Build. Upload to artifactory if in the master branch.
+      scripts:
+        - bamboo-specs/scripts/build.sh
   artifacts:
     - name: Sentry.xcframework.zip
       location: Carthage
