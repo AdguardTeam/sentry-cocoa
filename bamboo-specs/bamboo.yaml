@@ -21,7 +21,7 @@ Build Job:
     - script: |
         bamboo-specs/scripts/setup_ssh.sh
     - script: |
-        bamboo-specs/scripts/build.sh "ag01"
+        bamboo-specs/scripts/build.sh
   artifacts:
     - name: Sentry.xcframework.zip
       location: Carthage
