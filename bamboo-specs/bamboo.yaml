@@ -21,9 +21,9 @@ Build Job:
     - script: |
         bamboo-specs/scripts/setup_ssh.sh
     - script:
-      description: Build. Upload to artifactory if in the master branch.
-      scripts:
-        - bamboo-specs/scripts/build.sh
+        description: Build. Upload to artifactory if in the master branch.
+        scripts:
+          - bamboo-specs/scripts/build.sh
   artifacts:
     - name: Sentry.xcframework.zip
       location: Carthage
