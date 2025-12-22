@@ -32,7 +32,7 @@ Build Job:
       required: true
   requirements:
     - ephemeral
-    - image: registry.int.agrd.dev/macos/sequoia-build-agent-xcode16.1:latest
+    - image: registry.int.agrd.dev/macos/sequoia-build-agent-xcode16.3:latest
 repositories:
   - mac-sentry-cocoa:
       scope: global
