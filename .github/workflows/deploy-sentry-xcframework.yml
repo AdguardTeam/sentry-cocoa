@@ -1,0 +1,102 @@
+# Builds Sentry.xcframework (static, macOS-only) and deploys to Artifact Keeper.
+#
+# Triggered by:
+#   - Manual dispatch via the Actions tab (optionally specifying a git ref)
+#
+# The version is composed as:
+#   CURRENT_PROJECT_VERSION (from xcodebuild -showBuildSettings) + auto-incrementing build number
+#   e.g. "1.42" where 1 is from the project and 42 is the CI build counter.
+
+name: Deploy Sentry XCFramework for Mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch, tag, or commit SHA) to checkout. Defaults to the default branch.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build XCFramework
+    runs-on: ['ephemeral', 'ephemeral-mac', '${{ vars.BUILD_IMAGE_VERSION_MACOS }}']
+    outputs:
+      version: ${{ steps.ak-payload.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Get auto-increment build number
+        id: counter
+        uses: AdGuardSoftwareLimited/actions/actions/kv-incr@master
+        with:
+          team: mac
+          key: mac/sentry/build-number
+
+      - name: Build XCFramework
+        run: |
+          set -euo pipefail
+          ./scripts/build-xcframework.sh
+
+      - name: Create AK payload
+        id: ak-payload
+        run: |
+          set -euo pipefail
+          # Read CURRENT_PROJECT_VERSION from project build settings (no build required)
+          FW_VER=$(xcodebuild -project Sentry.xcodeproj \
+            -scheme Sentry \
+            -showBuildSettings \
+            2>/dev/null \
+            | grep 'CURRENT_PROJECT_VERSION = ' \
+            | head -1 \
+            | awk '{print $3}')
+          BUILD_NUMBER="${{ steps.counter.outputs.value }}"
+
+          FULL_VERSION="${FW_VER}.${BUILD_NUMBER}"
+
+          echo "version=${FULL_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Version=${FULL_VERSION}"
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<- EOF
+          ## Deploy Sentry XCFramework
+
+          | Field | Value |
+          |---|---|
+          | Framework version | ${FW_VER} |
+          | Build number | ${BUILD_NUMBER} |
+          | **Full version** | **${FULL_VERSION}** |
+          EOF
+
+          # Create AK directory structure
+          PAYLOAD_DIR="ak-payload/mac.sentry/${FULL_VERSION}"
+          mkdir -p "${PAYLOAD_DIR}"
+
+          # Zip the XCFramework
+          ditto -c -k --keepParent \
+            "Carthage/Sentry.xcframework" \
+            "${PAYLOAD_DIR}/Sentry.xcframework.zip"
+
+          echo "::notice::AK payload created at ${PAYLOAD_DIR}/Sentry.xcframework.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ak-payload
+          path: ak-payload/
+
+  deploy:
+    name: Deploy to Artifact Keeper
+    needs: build
+    if: always() && !failure() && needs.build.result == 'success'
+    uses: AdGuardSoftwareLimited/actions/.github/workflows/deploy-to-ak-generic.yml@master
+    with:
+      team: mac
+      ak-repo: apple-bin
+      artifact-pattern: ak-payload
+    secrets: inherit

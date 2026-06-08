@@ -2,6 +2,9 @@
 .DS_Store
 tmp
 
+# Spec Driven Dev data
+.sdd
+
 # Xcode
 
 ## Build generated
