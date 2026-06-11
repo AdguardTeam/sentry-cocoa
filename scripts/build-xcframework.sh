@@ -54,23 +54,44 @@ generate_xcframework() {
                 GCC_GENERATE_DEBUGGING_SYMBOLS="$GCC_GENERATE_DEBUGGING_SYMBOLS" \
                 OTHER_LDFLAGS="$OTHER_LDFLAGS"
                  
-            createxcframework+="-framework Carthage/archive/${scheme}${suffix}/${sdk}.xcarchive/Products/Library/Frameworks/${resolved_product_name}.framework "
+            local frameworkPath="Carthage/archive/${scheme}${suffix}/${sdk}.xcarchive/Products/Library/Frameworks/${resolved_product_name}.framework"
 
             if [ "$MACH_O_TYPE" = "staticlib" ]; then
-                local infoPlist="Carthage/archive/${scheme}${suffix}/${sdk}.xcarchive/Products/Library/Frameworks/${resolved_product_name}.framework/Info.plist"
-                
+                # ADGUARD: Sentry is a mixed Objective-C + Swift module. The only reliable way
+                # to ship it as a *static* library (for SwiftPM/Xcode consumers) is a static
+                # framework: the binary inside is already an `ar` static archive (built with
+                # MACH_O_TYPE=staticlib), wrapped in a .framework so the Swift module, the
+                # generated Sentry-Swift.h bridge and the module map are all shipped together.
+
+                local infoPlist="${frameworkPath}/Info.plist"
                 if [ ! -e "$infoPlist" ]; then
-                    infoPlist="Carthage/archive/${scheme}${suffix}/${sdk}.xcarchive/Products/Library/Frameworks/${resolved_product_name}.framework/Resources/Info.plist"
+                    infoPlist="${frameworkPath}/Resources/Info.plist"
                 fi
-                # This workaround is necessary to make Sentry Static framework to work
+                # This workaround is necessary to make the Sentry static framework work.
                 # More information in here: https://github.com/getsentry/sentry-cocoa/issues/3769
                 # The version 100 seems to work with all Xcode up to 15.4
                 plutil -replace "MinimumOSVersion" -string "100.0" "$infoPlist"
-            fi
-            
-            if [ -d "Carthage/archive/${scheme}${suffix}/${sdk}.xcarchive/dSYMs/${resolved_product_name}.framework.dSYM" ]; then
-                # Has debug symbols
+
+                # Drop the binary .swiftmodule files: they are locked to the exact compiler
+                # version that built them, so a consumer on a different toolchain would fail
+                # with "this SDK is not supported by the compiler". Keeping only the textual
+                # .swiftinterface files lets the consumer rebuild the module from the interface.
+                local swiftModuleDir="${frameworkPath}/Modules/${resolved_product_name}.swiftmodule"
+                if [ ! -d "$swiftModuleDir" ]; then
+                    swiftModuleDir="${frameworkPath}/Versions/Current/Modules/${resolved_product_name}.swiftmodule"
+                fi
+                if [ -d "$swiftModuleDir" ]; then
+                    rm -f "${swiftModuleDir}"/*.swiftmodule
+                fi
+
+                createxcframework+="-framework ${frameworkPath} "
+            else
+                createxcframework+="-framework ${frameworkPath} "
+
+                if [ -d "Carthage/archive/${scheme}${suffix}/${sdk}.xcarchive/dSYMs/${resolved_product_name}.framework.dSYM" ]; then
+                    # Has debug symbols
                     createxcframework+="-debug-symbols $(pwd -P)/Carthage/archive/${scheme}${suffix}/${sdk}.xcarchive/dSYMs/${resolved_product_name}.framework.dSYM "
+                fi
             fi
         else
             echo "${sdk} SDK not found"

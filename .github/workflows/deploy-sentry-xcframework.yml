@@ -60,6 +60,9 @@ jobs:
 
           FULL_VERSION="${FW_VER}.${BUILD_NUMBER}"
 
+          GIT_REF="${{ inputs.ref || 'default branch' }}"
+          GIT_SHA=$(git rev-parse HEAD)
+
           echo "version=${FULL_VERSION}" >> "$GITHUB_OUTPUT"
           echo "::notice::Version=${FULL_VERSION}"
 
@@ -68,6 +71,8 @@ jobs:
 
           | Field | Value |
           |---|---|
+          | Git ref | ${GIT_REF} |
+          | Git SHA | ${GIT_SHA} |
           | Framework version | ${FW_VER} |
           | Build number | ${BUILD_NUMBER} |
           | **Full version** | **${FULL_VERSION}** |
