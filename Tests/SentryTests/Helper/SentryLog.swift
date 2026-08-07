@@ -8,13 +8,13 @@ extension Sentry.SentryLog {
         SentryLog.configure(isDebug, diagnosticLevel: diagnosticLevel)
     }
     
-    static func setLogOutput(_ output: SentryLogOutputProtocol) {
+    static func setLogOutput(_ output: SentryLogOutput) {
         #if SENTRY_TEST || SENTRY_TEST_CI
         SentryLog.setOutput(output)
         #endif
     }
     
-    static func getLogOutput() -> SentryLogOutputProtocol {
+    static func getLogOutput() -> SentryLogOutput {
         #if SENTRY_TEST || SENTRY_TEST_CI
         return SentryLog.getOutput()
         #else

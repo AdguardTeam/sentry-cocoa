@@ -1,24 +1,14 @@
 #import <Foundation/Foundation.h>
 
-// SentryDefines.h is a key header and will be checked early,
-// ensuring this error appears first during the compile process.
-//
-// Setting APPLICATION_EXTENSION_API_ONLY to YES has a side effect of
-// including all Swift classes in the `Sentry-Swift.h` header which is
-// required for the SDK to work.
-//
-// https://github.com/getsentry/sentry-cocoa/issues/4426
-//
-// This mainly came up in RN SDK, because
-// some libraries advice to users
-// to set APPLICATION_EXTENSION_API_ONLY_NO
-// for all cocoapods targets, instead of
-// only to their pod.
-// https://github.com/getsentry/sentry-react-native/issues/3908
-#if APPLICATION_EXTENSION_API_ONLY_NO
-#    error "Set APPLICATION_EXTENSION_API_ONLY to YES in the Sentry build settings.\
- Setting the flag to YES is required for the SDK to work.\
- For more information, visit https://docs.sentry.io/platforms/apple/troubleshooting/#unknown-receiver-somereceiver-use-of-undeclared-identifier-someidentifier
+// Clang warns if a double quoted include is used instead of angle brackets in a public header
+// These 3 import variations are how public headers can be imported with angle brackets
+// for Sentry, SentryWithoutUIKit, and SPM
+#if __has_include(<Sentry/Sentry.h>)
+#    define SENTRY_HEADER(file) <Sentry/file.h>
+#elif __has_include(<SentryWithoutUIKit/Sentry.h>)
+#    define SENTRY_HEADER(file) <SentryWithoutUIKit/file.h>
+#else
+#    define SENTRY_HEADER(file) <file.h>
 #endif
 
 #ifdef __cplusplus
@@ -85,6 +75,7 @@
 @class SentryEvent;
 @class SentrySamplingContext;
 @class SentryUserFeedbackConfiguration;
+@class SentryLog;
 @protocol SentrySpan;
 
 typedef NS_ENUM(NSUInteger, SentryCrashCDeleteBehavior) {
@@ -92,11 +83,6 @@ typedef NS_ENUM(NSUInteger, SentryCrashCDeleteBehavior) {
     SentryCrashCDeleteBehaviorOnSucess,
     SentryCrashCDeleteBehaviorAlways
 };
-
-
-@protocol SentryLogOutputProtocol
-- (void) log: (NSString * _Nonnull) message;
-@end
 
 /** Callback for filter operations.
  *
@@ -141,6 +127,14 @@ typedef SentryEvent *_Nullable (^SentryBeforeSendEventCallback)(SentryEvent *_No
  */
 typedef id<SentrySpan> _Nullable (^SentryBeforeSendSpanCallback)(id<SentrySpan> _Nonnull span);
 
+#if !SWIFT_PACKAGE
+/**
+ * Use this block to drop or modify a log before the SDK sends it to Sentry. Return @c nil to drop
+ * the log.
+ */
+typedef SentryLog *_Nullable (^SentryBeforeSendLogCallback)(SentryLog *_Nonnull log);
+#endif // !SWIFT_PACKAGE
+
 /**
  * Block can be used to decide if the SDK should capture a screenshot or not. Return @c true if the
  * SDK should capture a screenshot, return @c false if not. This callback doesn't work for crashes.
@@ -177,6 +171,7 @@ typedef BOOL (^SentryShouldQueueEvent)(
 typedef NSNumber *_Nullable (^SentryTracesSamplerCallback)(
     SentrySamplingContext *_Nonnull samplingContext);
 
+#if !SDK_V9
 /**
  * Function pointer for span manipulation.
  * @param span The span to be used.
@@ -193,6 +188,7 @@ typedef NS_ENUM(NSInteger, SentryLogLevel) {
     kSentryLogLevelDebug,
     kSentryLogLevelVerbose
 };
+#endif // !SDK_V9
 
 /**
  * Sentry level.
@@ -204,15 +200,14 @@ typedef NS_ENUM(NSUInteger,
  * Static internal helper to convert enum to string.
  */
 static DEPRECATED_MSG_ATTRIBUTE(
-    "Use nameForSentryLevel() instead.") NSString *_Nonnull const SentryLevelNames[]
-    = {
-          @"none",
-          @"debug",
-          @"info",
-          @"warning",
-          @"error",
-          @"fatal",
-      };
+    "Use nameForSentryLevel() instead.") NSString *_Nonnull const SentryLevelNames[] = {
+    @"none",
+    @"debug",
+    @"info",
+    @"warning",
+    @"error",
+    @"fatal",
+};
 
 static NSUInteger const defaultMaxBreadcrumbs = 100;
 

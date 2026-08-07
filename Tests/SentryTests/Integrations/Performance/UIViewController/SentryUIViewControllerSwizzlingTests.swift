@@ -1,7 +1,7 @@
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
 
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import SentryTestUtilsDynamic
 import XCTest
 
@@ -11,10 +11,11 @@ class SentryUIViewControllerSwizzlingTests: XCTestCase {
         let dispatchQueue = TestSentryDispatchQueueWrapper()
         let objcRuntimeWrapper = SentryTestObjCRuntimeWrapper()
         let subClassFinder: TestSubClassFinder
-        let processInfoWrapper = SentryNSProcessInfoWrapper()
+        let processInfoWrapper = MockSentryProcessInfo()
         let binaryImageCache: SentryBinaryImageCache
         var options: Options
         
+        @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
         init() {
             subClassFinder = TestSubClassFinder(dispatchQueue: dispatchQueue, objcRuntimeWrapper: objcRuntimeWrapper, swizzleClassNameExcludes: [])
             binaryImageCache = SentryDependencyContainer.sharedInstance().binaryImageCache
@@ -32,7 +33,7 @@ class SentryUIViewControllerSwizzlingTests: XCTestCase {
         }
         
         var sutWithDefaultObjCRuntimeWrapper: SentryUIViewControllerSwizzling {
-            return SentryUIViewControllerSwizzling(options: options, dispatchQueue: dispatchQueue, objcRuntimeWrapper: SentryDefaultObjCRuntimeWrapper.sharedInstance(), subClassFinder: subClassFinder, processInfoWrapper: processInfoWrapper, binaryImageCache: binaryImageCache)
+            return SentryUIViewControllerSwizzling(options: options, dispatchQueue: dispatchQueue, objcRuntimeWrapper: SentryDependencyContainerSwiftHelper.objcRuntimeWrapper(), subClassFinder: subClassFinder, processInfoWrapper: processInfoWrapper, binaryImageCache: binaryImageCache)
         }
         
         var testableSut: TestSentryUIViewControllerSwizzling {
@@ -48,6 +49,7 @@ class SentryUIViewControllerSwizzlingTests: XCTestCase {
     
     private var fixture: Fixture!
 
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     override func setUp() {
         super.setUp()
         fixture = Fixture()
@@ -128,7 +130,7 @@ class SentryUIViewControllerSwizzlingTests: XCTestCase {
     
     func testViewControllerWithLoadView_TransactionBoundToScope() {
         let d = class_getImageName(type(of: self))!
-        fixture.processInfoWrapper.setProcessPath(String(cString: d))
+        fixture.processInfoWrapper.overrides.processPath = String(cString: d)
 
         fixture.sut.start()
         let controller = ViewWithLoadViewController()
@@ -202,9 +204,13 @@ class SentryUIViewControllerSwizzlingTests: XCTestCase {
         
         let debugDylib = "\(imageName).debug.dylib"
         
-        var image = createCrashBinaryImage(0, name: debugDylib)
-        SentryDependencyContainer.sharedInstance().binaryImageCache.start()
-        SentryDependencyContainer.sharedInstance().binaryImageCache.binaryImageAdded(&image)
+        let image = createCrashBinaryImage(0, name: debugDylib)
+        SentryDependencyContainer.sharedInstance().binaryImageCache.start(false)
+        SentryDependencyContainer.sharedInstance().binaryImageCache.binaryImageAdded(imageName: image.name,
+                                                                                     vmAddress: image.vmAddress,
+                                                                                     address: image.address,
+                                                                                     size: image.size,
+                                                                                     uuid: image.uuid)
         
         let sut = fixture.sut
         sut.start()
@@ -320,7 +326,7 @@ class SentryUIViewControllerSwizzlingTests: XCTestCase {
     }
 }
 
-class MockApplication: NSObject, SentryUIApplicationProtocol {
+class MockApplication: NSObject, SentryUIApplication {
     class MockApplicationDelegate: NSObject, UIApplicationDelegate {
         var window: UIWindow?
         

@@ -1,8 +1,8 @@
 #import "SentryDsn.h"
 #import "SentryError.h"
 #import "SentryMeta.h"
-#import "SentryNSURLRequest.h"
-#import "SentryOptions+HybridSDKs.h"
+#import "SentryOptionsInternal.h"
+#import "SentrySwift.h"
 #import <XCTest/XCTest.h>
 
 @interface SentryDsnTests : XCTestCase
@@ -14,55 +14,16 @@
 - (void)testMissingUsernamePassword
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{ @"dsn" : @"https://sentry.io" }
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ @"dsn" : @"https://sentry.io" }
                                                 didFailWithError:&error];
     XCTAssertEqual(kSentryErrorInvalidDsnError, error.code);
     XCTAssertNil(options);
 }
 
-- (void)testDsnHeaderUsernameAndPassword
-{
-    NSError *error = nil;
-    SentryDsn *dsn = [[SentryDsn alloc] initWithString:@"https://username:password@sentry.io/1"
-                                      didFailWithError:&error];
-    SentryNSURLRequest *request = [[SentryNSURLRequest alloc] initStoreRequestWithDsn:dsn
-                                                                              andData:[NSData data]
-                                                                     didFailWithError:&error];
-
-    NSString *authHeader =
-        [[NSString alloc] initWithFormat:@"Sentry "
-                                         @"sentry_version=7,sentry_client=sentry.cocoa/"
-                                         @"%@,sentry_key=username,sentry_"
-                                         @"secret=password",
-            SentryMeta.versionString];
-
-    XCTAssertEqualObjects(request.allHTTPHeaderFields[@"X-Sentry-Auth"], authHeader);
-    XCTAssertNil(error);
-}
-
-- (void)testDsnHeaderUsername
-{
-    NSError *error = nil;
-    SentryDsn *dsn = [[SentryDsn alloc] initWithString:@"https://username@sentry.io/1"
-                                      didFailWithError:&error];
-    SentryNSURLRequest *request = [[SentryNSURLRequest alloc] initStoreRequestWithDsn:dsn
-                                                                              andData:[NSData data]
-                                                                     didFailWithError:&error];
-
-    NSString *authHeader =
-        [[NSString alloc] initWithFormat:@"Sentry "
-                                         @"sentry_version=7,sentry_client=sentry.cocoa/"
-                                         @"%@,sentry_key=username",
-            SentryMeta.versionString];
-
-    XCTAssertEqualObjects(request.allHTTPHeaderFields[@"X-Sentry-Auth"], authHeader);
-    XCTAssertNil(error);
-}
-
 - (void)testMissingScheme
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{ @"dsn" : @"https://sentry.io" }
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ @"dsn" : @"https://sentry.io" }
                                                 didFailWithError:&error];
     XCTAssertEqual(kSentryErrorInvalidDsnError, error.code);
     XCTAssertNil(options);
@@ -71,7 +32,7 @@
 - (void)testMissingHost
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{ @"dsn" : @"http:///1" }
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ @"dsn" : @"http:///1" }
                                                 didFailWithError:&error];
     XCTAssertEqual(kSentryErrorInvalidDsnError, error.code);
     XCTAssertNil(options);
@@ -80,12 +41,14 @@
 - (void)testUnsupportedProtocol
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{ @"dsn" : @"ftp://sentry.io/1" }
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ @"dsn" : @"ftp://sentry.io/1" }
                                                 didFailWithError:&error];
     XCTAssertEqual(kSentryErrorInvalidDsnError, error.code);
     XCTAssertNil(options);
 }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 - (void)testDsnUrl
 {
     NSError *error = nil;
@@ -104,6 +67,7 @@
         [[dsn2 getStoreEndpoint] absoluteString], @"https://sentry.io/foo/bar/baz/api/1/store/");
     XCTAssertNil(error);
 }
+#pragma clang diagnostic pop
 
 - (void)testGetEnvelopeUrl
 {
@@ -124,6 +88,8 @@
     XCTAssertNil(error);
 }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 - (void)testGetStoreDsnCachesResult
 {
     SentryDsn *dsn = [[SentryDsn alloc] initWithString:@"https://username:password@getsentry.net/1"
@@ -133,6 +99,7 @@
     // Assert same reference
     XCTAssertTrue([dsn getStoreEndpoint] == [dsn getStoreEndpoint]);
 }
+#pragma clang diagnostic pop
 
 - (void)testInitWithInvalidString
 {

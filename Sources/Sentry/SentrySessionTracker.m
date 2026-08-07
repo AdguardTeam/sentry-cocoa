@@ -1,39 +1,61 @@
 #import "SentrySessionTracker.h"
 #import "SentryClient+Private.h"
 #import "SentryClient.h"
-#import "SentryDependencyContainer.h"
 #import "SentryFileManager.h"
 #import "SentryHub+Private.h"
+#import "SentryInternalDefines.h"
 #import "SentryInternalNotificationNames.h"
-#import "SentryLog.h"
-#import "SentryNSNotificationCenterWrapper.h"
-#import "SentryOptions.h"
+#import "SentryLogC.h"
+#import "SentryNotificationNames.h"
+#import "SentryOptions+Private.h"
 #import "SentrySDK+Private.h"
 #import "SentrySwift.h"
+
+#import "SentryProfilingConditionals.h"
+#if SENTRY_TARGET_PROFILING_SUPPORTED
+#    import "SentryProfiler+Private.h"
+#endif // SENTRY_TARGET_PROFILING_SUPPORTED
 
 #if SENTRY_TARGET_MACOS_HAS_UI
 #    import <Cocoa/Cocoa.h>
 #endif
 
+// dispatchSync is internal Swift API; declare it privately for ObjC callers.
+@interface SentryDispatchQueueWrapper ()
+- (void)dispatchSync:(void (^)(void))block;
+@end
+
 @interface SentrySessionTracker ()
 
 @property (nonatomic, strong) SentryOptions *options;
 @property (atomic, strong) NSDate *lastInForeground;
-@property (nonatomic, assign) BOOL wasDidBecomeActiveCalled;
+@property (nonatomic, assign) BOOL wasStartSessionCalled;
 @property (nonatomic, assign) BOOL subscribedToNotifications;
-@property (nonatomic, strong) SentryNSNotificationCenterWrapper *notificationCenter;
+
+@property (nonatomic, strong) id<SentryApplication> _Nullable (^applicationProvider)(void);
+@property (nonatomic, strong) id<SentryCurrentDateProvider> dateProvider;
+@property (nonatomic, strong) id<SentryNSNotificationCenterWrapper> notificationCenter;
+@property (nonatomic, strong) SentryDispatchQueueWrapper *dispatchQueue;
+
+- (void)reevaluateProfileSessionSampleRateIfNeededForHub:(SentryHub *_Nullable)hub;
 
 @end
 
 @implementation SentrySessionTracker
 
 - (instancetype)initWithOptions:(SentryOptions *)options
-             notificationCenter:(SentryNSNotificationCenterWrapper *)notificationCenter;
+            applicationProvider:(id<SentryApplication> _Nullable (^)(void))applicationProvider
+                   dateProvider:(id<SentryCurrentDateProvider>)dateProvider
+             notificationCenter:(id<SentryNSNotificationCenterWrapper>)notificationCenter
+                  dispatchQueue:(SentryDispatchQueueWrapper *)dispatchQueue
 {
     if (self = [super init]) {
         self.options = options;
-        self.wasDidBecomeActiveCalled = NO;
+        self.wasStartSessionCalled = NO;
+        self.applicationProvider = applicationProvider;
+        self.dateProvider = dateProvider;
         self.notificationCenter = notificationCenter;
+        self.dispatchQueue = dispatchQueue;
     }
     return self;
 }
@@ -60,54 +82,77 @@
     // ending the cached session.
     [self endCachedSession];
 
-    [self.notificationCenter
-        addObserver:self
-           selector:@selector(didBecomeActive)
-               name:SentryNSNotificationCenterWrapper.didBecomeActiveNotificationName];
+    [self.notificationCenter addObserver:self
+                                selector:@selector(didBecomeActive)
+                                    name:SentryDidBecomeActiveNotification
+                                  object:nil];
 
     [self.notificationCenter addObserver:self
                                 selector:@selector(didBecomeActive)
-                                    name:SentryHybridSdkDidBecomeActiveNotificationName];
+                                    name:SentryHybridSdkDidBecomeActiveNotificationName
+                                  object:nil];
+    [self.notificationCenter addObserver:self
+                                selector:@selector(willResignActive)
+                                    name:SentryWillResignActiveNotification
+                                  object:nil];
 
-    [self.notificationCenter
-        addObserver:self
-           selector:@selector(willResignActive)
-               name:SentryNSNotificationCenterWrapper.willResignActiveNotificationName];
+    [self.notificationCenter addObserver:self
+                                selector:@selector(willTerminate)
+                                    name:SentryWillTerminateNotification
+                                  object:nil];
 
-    [self.notificationCenter
-        addObserver:self
-           selector:@selector(willTerminate)
-               name:SentryNSNotificationCenterWrapper.willTerminateNotificationName];
+    // Edge case: When starting the SDK after the app did become active, we need to call
+    //            didBecomeActive manually to start the session. This is the case when
+    //            closing the SDK and starting it again.
+    if (self.application.mainThread_isActive) {
+        [self startSession];
+    }
 #else
     SENTRY_LOG_DEBUG(@"NO UIKit -> SentrySessionTracker will not track sessions automatically.");
 #endif
 }
 
+- (id<SentryApplication> _Nullable)application
+{
+    return self.applicationProvider();
+}
+
 - (void)stop
+{
+    // Sync because SentrySDK.close() flushes and shuts down the transport after uninstalling
+    // integrations.
+    [self.dispatchQueue dispatchSync:^{ [[SentrySDKInternal currentHub] endSession]; }];
+
+    [self removeObservers];
+
+    // Reset the `wasStartSessionCalled` flag to ensure that the next time
+    // `startSession` is called, it will start a new session.
+    self.wasStartSessionCalled = NO;
+}
+
+- (void)removeObservers
 {
 #if SENTRY_HAS_UIKIT || SENTRY_TARGET_MACOS_HAS_UI
     // Remove the observers with the most specific detail possible, see
     // https://developer.apple.com/documentation/foundation/nsnotificationcenter/1413994-removeobserver
-    [self.notificationCenter
-        removeObserver:self
-                  name:SentryNSNotificationCenterWrapper.didBecomeActiveNotificationName];
+    [self.notificationCenter removeObserver:self name:SentryDidBecomeActiveNotification object:nil];
     [self.notificationCenter removeObserver:self
-                                       name:SentryHybridSdkDidBecomeActiveNotificationName];
-    [self.notificationCenter
-        removeObserver:self
-                  name:SentryNSNotificationCenterWrapper.willResignActiveNotificationName];
-    [self.notificationCenter
-        removeObserver:self
-                  name:SentryNSNotificationCenterWrapper.willTerminateNotificationName];
+                                       name:SentryHybridSdkDidBecomeActiveNotificationName
+                                     object:nil];
+    [self.notificationCenter removeObserver:self
+                                       name:SentryWillResignActiveNotification
+                                     object:nil];
+    [self.notificationCenter removeObserver:self name:SentryWillTerminateNotification object:nil];
 #endif
 }
 
 - (void)dealloc
 {
-    [self stop];
+    [self removeObservers];
+
     // In dealloc it's safe to unsubscribe for all, see
     // https://developer.apple.com/documentation/foundation/nsnotificationcenter/1413994-removeobserver
-    [self.notificationCenter removeObserver:self];
+    [self.notificationCenter removeObserver:self name:nil object:nil];
 }
 
 /**
@@ -117,14 +162,16 @@
  */
 - (void)endCachedSession
 {
-    SentryHub *hub = [SentrySDK currentHub];
-    NSDate *_Nullable lastInForeground =
-        [[[hub getClient] fileManager] readTimestampLastInForeground];
-    if (nil != lastInForeground) {
-        [[[hub getClient] fileManager] deleteTimestampLastInForeground];
-    }
+    [self.dispatchQueue dispatchAsyncWithBlock:^{
+        SentryHub *hub = [SentrySDKInternal currentHub];
+        NSDate *_Nullable lastInForeground =
+            [[[hub getClient] fileManager] readTimestampLastInForeground];
+        if (nil != lastInForeground) {
+            [[[hub getClient] fileManager] deleteTimestampLastInForeground];
+        }
 
-    [hub closeCachedSessionWithTimestamp:lastInForeground];
+        [hub closeCachedSessionWithTimestamp:lastInForeground];
+    }];
 }
 
 /**
@@ -136,44 +183,72 @@
  * https://developer.apple.com/documentation/uikit/uiapplicationdelegate/1622956-applicationdidbecomeactive.
  * @warning Hybrid SDKs must only post this notification if they are running in the foreground
  * because the auto session tracking logic doesn't support background tasks. Posting the
- * notification from the background would mess up the session stats. Hybrid SDKs must only post this
- * notification if they are running in the foreground because the auto session tracking logic
- * doesn't support background tasks. Posting the notification from the background would mess up the
- * session stats.
+ * notification from the background would mess up the session stats.
  */
 - (void)didBecomeActive
+{
+    [self startSession];
+}
+
+- (void)startSession
 {
     // We don't know if the hybrid SDKs post the notification from a background thread, so we
     // synchronize to be safe.
     @synchronized(self) {
-        if (self.wasDidBecomeActiveCalled) {
+        if (self.wasStartSessionCalled) {
+            SENTRY_LOG_DEBUG(
+                @"Ignoring didBecomeActive notification because it was already called.");
             return;
         }
-        self.wasDidBecomeActiveCalled = YES;
+        self.wasStartSessionCalled = YES;
     }
 
-    SentryHub *hub = [SentrySDK currentHub];
-    self.lastInForeground = [[[hub getClient] fileManager] readTimestampLastInForeground];
+    SentryOptions *options = self.options;
+    NSDate *now = [self.dateProvider date];
 
-    if (nil == self.lastInForeground) {
-        // Cause we don't want to track sessions if the app is in the background we need to wait
-        // until the app is in the foreground to start a session.
-        [hub startSession];
-    } else {
-        // When the app was already in the foreground we have to decide whether it was long enough
-        // in the background to start a new session or to keep the session open. We don't want a new
-        // session if the user switches to another app for just a few seconds.
-        NSTimeInterval secondsInBackground =
-            [[SentryDependencyContainer.sharedInstance.dateProvider date]
-                timeIntervalSinceDate:self.lastInForeground];
-
-        if (secondsInBackground * 1000 >= (double)(self.options.sessionTrackingIntervalMillis)) {
-            [hub endSessionWithTimestamp:self.lastInForeground];
-            [hub startSession];
-        }
-    }
-    [[[hub getClient] fileManager] deleteTimestampLastInForeground];
+    // Clear inline so delayed async work can't overwrite a newer willResignActive timestamp.
     self.lastInForeground = nil;
+
+    __weak SentrySessionTracker *weakSelf = self;
+    [self.dispatchQueue dispatchAsyncWithBlock:^{
+        SentrySessionTracker *strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            return;
+        }
+
+        SentryHub *hub = [SentrySDKInternal currentHub];
+        NSDate *_Nullable nullableLastInForeground =
+            [[[hub getClient] fileManager] readTimestampLastInForeground];
+
+        if (nil == nullableLastInForeground) {
+            // Cause we don't want to track sessions if the app is in the background we need to wait
+            // until the app is in the foreground to start a session.
+            SENTRY_LOG_DEBUG(
+                @"App was in the foreground for the first time. Starting a new session.");
+            [hub startSession];
+            [strongSelf reevaluateProfileSessionSampleRateIfNeededForHub:hub];
+        } else {
+            // When the app was already in the foreground we have to decide whether it was long
+            // enough in the background to start a new session or to keep the session open. We don't
+            // want a new session if the user switches to another app for just a few seconds.
+            NSDate *lastInForeground = SENTRY_UNWRAP_NULLABLE(NSDate, nullableLastInForeground);
+            NSTimeInterval secondsInBackground = [now timeIntervalSinceDate:lastInForeground];
+
+            if (secondsInBackground * 1000 >= (double)(options.sessionTrackingIntervalMillis)) {
+                SENTRY_LOG_DEBUG(
+                    @"App was in the background for %f seconds. Starting a new session.",
+                    secondsInBackground);
+                [hub endSessionWithTimestamp:lastInForeground];
+                [hub startSession];
+                [strongSelf reevaluateProfileSessionSampleRateIfNeededForHub:hub];
+            } else {
+                SENTRY_LOG_DEBUG(
+                    @"App was in the background for %f seconds. Not starting a new session.",
+                    secondsInBackground);
+            }
+        }
+        [[[hub getClient] fileManager] deleteTimestampLastInForeground];
+    }];
 }
 
 /**
@@ -184,10 +259,16 @@
  */
 - (void)willResignActive
 {
-    self.lastInForeground = [SentryDependencyContainer.sharedInstance.dateProvider date];
-    SentryHub *hub = [SentrySDK currentHub];
-    [[[hub getClient] fileManager] storeTimestampLastInForeground:self.lastInForeground];
-    self.wasDidBecomeActiveCalled = NO;
+    NSDate *lastInForeground = [self.dateProvider date];
+    self.lastInForeground = lastInForeground;
+    self.wasStartSessionCalled = NO;
+
+    // If this write is lost due to a crash, the next launch will find a cached session
+    // without a lastInForeground timestamp and closeCachedSession will end it as abnormal.
+    [self.dispatchQueue dispatchAsyncWithBlock:^{
+        SentryHub *hub = [SentrySDKInternal currentHub];
+        [[[hub getClient] fileManager] storeTimestampLastInForeground:lastInForeground];
+    }];
 }
 
 /**
@@ -195,13 +276,24 @@
  */
 - (void)willTerminate
 {
-    NSDate *sessionEnded = nil == self.lastInForeground
-        ? [SentryDependencyContainer.sharedInstance.dateProvider date]
-        : self.lastInForeground;
-    SentryHub *hub = [SentrySDK currentHub];
-    [hub endSessionWithTimestamp:sessionEnded];
-    [[[hub getClient] fileManager] deleteTimestampLastInForeground];
-    self.wasDidBecomeActiveCalled = NO;
+    NSDate *sessionEnded
+        = nil == self.lastInForeground ? [self.dateProvider date] : self.lastInForeground;
+    [self.dispatchQueue dispatchSync:^{
+        SentryHub *hub = [SentrySDKInternal currentHub];
+        [hub endSessionWithTimestamp:sessionEnded];
+        [[[hub getClient] fileManager] deleteTimestampLastInForeground];
+    }];
+    self.wasStartSessionCalled = NO;
+}
+
+// Private helper for profiling session sample-rate reevaluation.
+- (void)reevaluateProfileSessionSampleRateIfNeededForHub:(SentryHub *_Nullable)hub
+{
+#if SENTRY_TARGET_PROFILING_SUPPORTED
+    if (hub.client.options.profiling != nil) {
+        sentry_reevaluateSessionSampleRate();
+    }
+#endif // SENTRY_TARGET_PROFILING_SUPPORTED
 }
 
 @end

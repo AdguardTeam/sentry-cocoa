@@ -1,4 +1,5 @@
 import Sentry
+import SentrySampleShared
 import UIKit
 
 class TransactionsViewController: UIViewController {
@@ -7,7 +8,6 @@ class TransactionsViewController: UIViewController {
     
     private let dispatchQueue = DispatchQueue(label: "ViewController", attributes: .concurrent)
     private var timer: Timer?
-    @IBOutlet weak var dsnView: UIView!
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -17,8 +17,6 @@ class TransactionsViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         periodicallyDoWork()
-        
-        addDSNDisplay(self, vcview: dsnView)
     }
     
     override func viewDidDisappear(_ animated: Bool) {
@@ -27,6 +25,11 @@ class TransactionsViewController: UIViewController {
     }
     
     private func periodicallyDoWork() {
+      // This creates spans on background queues when doing things like reading files
+      // The background spans can interfere with UI tests that assert certain active spans
+      // (using SentryScope.span) because if this span is running the active span does not
+      // get overwritten (bindToScope = 0)
+      guard ProcessInfo.processInfo.environment["--io.sentry.ui-test.test-name"] == nil else { return }
 
         self.timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
             self.dispatchQueue.async {
@@ -48,7 +51,7 @@ class TransactionsViewController: UIViewController {
     
     private func readLoremIpsumFile() {
         dispatchQueue.async {
-            if let path = Bundle.main.path(forResource: "LoremIpsum", ofType: "txt") {
+            if let path = BundleResourceProvider.loremIpsumTextFilePath {
                 _ = FileManager.default.contents(atPath: path)
             }
         }
@@ -131,7 +134,15 @@ class TransactionsViewController: UIViewController {
     }
     
     @IBAction func appHangFullyBlocking(_ sender: Any) {
-        triggerFullyBlockingAppHang(button: self.appHangFullyBlockingButton)
+        triggerFullyBlockingAppHangThreadSleeping()
+    }
+
+    @IBAction func appHangFullyBlockingBusyMainThread(_ sender: Any) {
+        if #available(iOS 15.0, *) {
+            triggerFullyBlockingAppHangWithImageDecoding()
+        } else {
+            triggerFullyBlockingAppHangThreadSleeping()
+        }
     }
 
     @IBAction func captureTransaction(_ sender: UIButton) {

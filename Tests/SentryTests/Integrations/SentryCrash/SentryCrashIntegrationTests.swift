@@ -1,5 +1,5 @@
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 class SentryCrashIntegrationTests: NotificationCenterTestCase {
@@ -7,15 +7,17 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     private static let dsnAsString = TestConstants.dsnAsString(username: "SentryCrashIntegrationTests")
     
     private class Fixture {
+        let dateProvider = TestCurrentDateProvider()
         let dispatchQueueWrapper = TestSentryDispatchQueueWrapper()
         let hub: SentryHub
         let client: TestClient!
         let options: Options
         let sentryCrash: TestSentryCrashWrapper
-        
-        init() {
+        let fileManager: TestFileManager
+
+        init() throws {
             SentryDependencyContainer.sharedInstance().sysctlWrapper = TestSysctl()
-            sentryCrash = TestSentryCrashWrapper.sharedInstance()
+            sentryCrash = TestSentryCrashWrapper(processInfoWrapper: ProcessInfo.processInfo)
             sentryCrash.internalActiveDurationSinceLastCrash = 5.0
             sentryCrash.internalCrashedLastLaunch = true
             
@@ -24,8 +26,20 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
             options.releaseName = TestData.appState.releaseName
             options.tracesSampleRate = 1.0
             
-            client = TestClient(options: options, fileManager: try! SentryFileManager(options: options, dispatchQueueWrapper: dispatchQueueWrapper), deleteOldEnvelopeItems: false)
+            client = TestClient(options: options, fileManager: try! SentryFileManager(
+                options: options,
+                dateProvider: dateProvider,
+                dispatchQueueWrapper: dispatchQueueWrapper
+            ), deleteOldEnvelopeItems: false)
             hub = TestHub(client: client, andScope: nil)
+
+            fileManager = try TestFileManager(
+                options: options,
+                dateProvider: dateProvider,
+                dispatchQueueWrapper: dispatchQueueWrapper
+            )
+
+            SentryDependencyContainer.sharedInstance().dateProvider = dateProvider
         }
         
         var session: SentrySession {
@@ -49,12 +63,12 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
             return SentryCrashIntegration(crashAdapter: crash, andDispatchQueueWrapper: dispatchQueueWrapper)
         }
     }
+
+    private var fixture: Fixture!
     
-    private lazy var fixture = Fixture()
-    
-    override func setUp() {
-        super.setUp()
-        SentryDependencyContainer.sharedInstance().dateProvider = TestCurrentDateProvider()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        fixture = try Fixture()
         
         fixture.client.fileManager.deleteCurrentSession()
         fixture.client.fileManager.deleteCrashedSession()
@@ -62,7 +76,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         fixture.client.fileManager.deleteAppState()
         fixture.client.fileManager.deleteAppHangEvent()
         
-        SentrySDK.setStart(fixture.options)
+        SentrySDKInternal.setStart(with: fixture.options)
     }
     
     override func tearDown() {
@@ -77,6 +91,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     }
     
     // Test for GH-581
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testReleaseNamePassedToSentryCrash() throws {
         let releaseName = "1.0.0"
         let dist = "14G60"
@@ -95,6 +110,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         assertUserInfoField(userInfo: userInfo, key: "dist", expected: dist)
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testContext_IsPassedToSentryCrash() throws {
         SentrySDK.start { options in
             options.dsn = SentryCrashIntegrationTests.dsnAsString
@@ -109,7 +125,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     
     func testEndSessionAsCrashed_WithCurrentSession() throws {
         let expectedCrashedSession = givenCrashedSession()
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
         
         try advanceTime(bySeconds: 10)
         
@@ -122,11 +138,11 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
     func testEndSessionAsCrashed_WhenOOM_WithCurrentSession() throws {
         givenOOMAppState()
-        SentrySDK.startInvocations = 1
+        SentrySDKInternal.startInvocations = 1
         
         let expectedCrashedSession = givenCrashedSession()
         
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
         try advanceTime(bySeconds: 10)
         
         let sut = fixture.sutWithoutCrash
@@ -210,7 +226,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     
     func testEndSessionAsAbnormal_NoCurrentSession() {
         // Arrange
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
         let sentryCrash = fixture.sentryCrash
         sentryCrash.internalCrashedLastLaunch = false
         let sut = SentryCrashIntegration(crashAdapter: sentryCrash, andDispatchQueueWrapper: fixture.dispatchQueueWrapper)
@@ -227,7 +243,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     
     func testEndSessionAsAbnormal_NoAppHangEvent() {
         // Arrange
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
         let sentryCrash = fixture.sentryCrash
         sentryCrash.internalCrashedLastLaunch = false
         let sut = SentryCrashIntegration(crashAdapter: sentryCrash, andDispatchQueueWrapper: fixture.dispatchQueueWrapper)
@@ -246,10 +262,14 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     
     func testEndSessionAsAbnormal_AppHangEventDeletedInBetween() throws {
         // Arrange
-        let fileManager = try DeleteAppHangWhenCheckingExistenceFileManager(options: fixture.options)
+        let fileManager = try DeleteAppHangWhenCheckingExistenceFileManager(
+            options: fixture.options,
+            dateProvider: TestCurrentDateProvider(),
+            dispatchQueueWrapper: fixture.dispatchQueueWrapper
+        )
         fixture.client.fileManager = fileManager
         
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
         let sentryCrash = fixture.sentryCrash
         sentryCrash.internalCrashedLastLaunch = false
         let sut = SentryCrashIntegration(crashAdapter: sentryCrash, andDispatchQueueWrapper: fixture.dispatchQueueWrapper)
@@ -269,7 +289,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     
     func testEndSessionAsAbnormal_AppHangEvent_EndsSessionAsAbnormal() throws {
         // Arrange
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
         let sentryCrash = fixture.sentryCrash
         sentryCrash.internalCrashedLastLaunch = false
         let sut = SentryCrashIntegration(crashAdapter: sentryCrash, andDispatchQueueWrapper: fixture.dispatchQueueWrapper)
@@ -300,7 +320,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     func testEndSessionAsAbnormal_AppHangEventAndCrash_EndsSessionAsCrashed() throws {
         // Arrange
         let expectedCrashedSession = givenCrashedSession()
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
         let fileManager = fixture.client.fileManager
         let appHangEvent = Event()
         fileManager.storeAppHang(appHangEvent)
@@ -378,7 +398,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         api?.pointee.setEnabled(true)
         
         let transport = TestTransport()
-        let client = SentryClient(options: fixture.options, fileManager: try TestFileManager(options: fixture.options), deleteOldEnvelopeItems: false)
+        let client = SentryClient(options: fixture.options, fileManager: fixture.fileManager, deleteOldEnvelopeItems: false)
         Dynamic(client).transportAdapter = TestTransportAdapter(transports: [transport], options: fixture.options)
         hub.bindClient(client)
         
@@ -473,7 +493,37 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         XCTAssertFalse(wasUncaughtExceptionHandlerCalled)
     }
 #endif // os(macOS)
-    
+
+    func testEnableCppExceptionsV2_SwapsCxaThrow() {
+        // Arrange
+        defer { sentrycrashct_unswap_cxa_throw() }
+        let (sut, _) = givenSutWithGlobalHubAndCrashWrapper()
+
+        let options = Options()
+        options.experimental.enableUnhandledCPPExceptionsV2 = true
+
+        // Act
+        sut.install(with: options)
+
+        // Assert
+        XCTAssertTrue(sentrycrashct_is_cxa_throw_swapped(), "C++ exception throw handler must be swapped when enableUnhandledCPPExceptionsV2 is true.")
+    }
+
+    func testCppExceptionsV2NotEnabled_DoesNotSwapCxaThrow() {
+        // Arrange
+        defer { sentrycrashct_unswap_cxa_throw() }
+        let (sut, _) = givenSutWithGlobalHubAndCrashWrapper()
+
+        let options = Options()
+        options.experimental.enableUnhandledCPPExceptionsV2 = false
+
+        // Act
+        sut.install(with: options)
+
+        // Assert
+        XCTAssertFalse(sentrycrashct_is_cxa_throw_swapped(), "C++ exception throw handler must NOT be swapped when enableUnhandledCPPExceptionsV2 is false.")
+    }
+
     func testEnableTracingForCrashes_SetsCallback() throws {
         let (sut, _) = givenSutWithGlobalHubAndCrashWrapper()
         let options = Options()
@@ -510,9 +560,9 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         let client = SentryClient(options: options)
         defer { client?.fileManager.deleteAllEnvelopes() }
         let hub = SentryHub(client: client, andScope: nil)
-        SentrySDK.setCurrentHub(hub)
+        SentrySDKInternal.setCurrentHub(hub)
         
-        let sut = fixture.getSut(crashWrapper: SentryCrashWrapper.sharedInstance())
+        let sut = fixture.getSut(crashWrapper: SentryDependencyContainer.sharedInstance().crashWrapper)
         sut.install(with: options)
         
         let transaction = SentrySDK.startTransaction(name: "Crashing", operation: "Operation", bindToScope: true)
@@ -523,7 +573,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         
         XCTAssertEqual(1, client?.fileManager.getAllEnvelopes().count)
         let transactionEnvelopeFileContents = try XCTUnwrap(client?.fileManager.getOldestEnvelope())
-        let envelope = try XCTUnwrap(SentrySerialization.envelope(with: transactionEnvelopeFileContents.contents))
+        let envelope = try XCTUnwrap(SentrySerializationSwift.envelope(with: transactionEnvelopeFileContents.contents))
         XCTAssertEqual(1, envelope.items.count)
         XCTAssertEqual("transaction", envelope.items.first?.header.type)
     }
@@ -535,13 +585,13 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         let client = SentryClient(options: options)
         defer { client?.fileManager.deleteAllEnvelopes() }
         let hub = SentryHub(client: client, andScope: nil)
-        SentrySDK.setCurrentHub(hub)
+        SentrySDKInternal.setCurrentHub(hub)
         
-        let sut = fixture.getSut(crashWrapper: SentryCrashWrapper.sharedInstance())
+        let sut = fixture.getSut(crashWrapper: SentryDependencyContainer.sharedInstance().crashWrapper)
         sut.install(with: options)
         
         let transaction = SentrySDK.startTransaction(name: "name", operation: "operation", bindToScope: true)
-        SentrySDK.currentHub().scope.span = nil
+        SentrySDKInternal.currentHub().scope.span = nil
         
         sentrycrash_invokeSaveTransaction()
         
@@ -556,20 +606,20 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
         let client = SentryClient(options: options)
         defer { client?.fileManager.deleteAllEnvelopes() }
         let hub = SentryHub(client: client, andScope: nil)
-        SentrySDK.setCurrentHub(hub)
+        SentrySDKInternal.setCurrentHub(hub)
         
-        let sut = fixture.getSut(crashWrapper: SentryCrashWrapper.sharedInstance())
+        let sut = fixture.getSut(crashWrapper: SentryDependencyContainer.sharedInstance().crashWrapper)
         sut.install(with: options)
         
         let transaction = SentrySDK.startTransaction(name: "name", operation: "operation", bindToScope: true)
         let span = transaction.startChild(operation: "child")
-        SentrySDK.currentHub().scope.span = span
+        SentrySDKInternal.currentHub().scope.span = span
         
         sentrycrash_invokeSaveTransaction()
         
         XCTAssertEqual(1, client?.fileManager.getAllEnvelopes().count)
         let transactionEnvelopeFileContents = try XCTUnwrap(client?.fileManager.getOldestEnvelope())
-        let envelope = try XCTUnwrap(SentrySerialization.envelope(with: transactionEnvelopeFileContents.contents))
+        let envelope = try XCTUnwrap(SentrySerializationSwift.envelope(with: transactionEnvelopeFileContents.contents))
         XCTAssertEqual(1, envelope.items.count)
         XCTAssertEqual("transaction", envelope.items.first?.header.type)
     }
@@ -600,7 +650,7 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
     private func givenSutWithGlobalHub() -> (SentryCrashIntegration, SentryHub) {
         let sut = fixture.getSut()
         let hub = fixture.hub
-        SentrySDK.setCurrentHub(hub)
+        SentrySDKInternal.setCurrentHub(hub)
 
         return (sut, hub)
     }
@@ -609,9 +659,9 @@ class SentryCrashIntegrationTests: NotificationCenterTestCase {
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
         SentryDependencyContainer.sharedInstance().uiDeviceWrapper.start()
 #endif
-        let sut = fixture.getSut(crashWrapper: SentryCrashWrapper.sharedInstance())
+        let sut = fixture.getSut(crashWrapper: SentryDependencyContainer.sharedInstance().crashWrapper)
         let hub = fixture.hub
-        SentrySDK.setCurrentHub(hub)
+        SentrySDKInternal.setCurrentHub(hub)
 
         return (sut, hub)
     }

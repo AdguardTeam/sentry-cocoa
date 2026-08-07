@@ -1,6 +1,6 @@
 #import "SentryTransport.h"
 
-@protocol SentryRandom;
+@protocol SentryRandomProtocol;
 
 @class SentryCrashWrapper;
 @class SentryDispatchQueueWrapper;
@@ -13,6 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SentryClient ()
 
 - (_Nullable instancetype)initWithOptions:(SentryOptions *)options
+                             dateProvider:(id<SentryCurrentDateProvider>)dateProvider
                             dispatchQueue:(SentryDispatchQueueWrapper *)dispatchQueue
                    deleteOldEnvelopeItems:(BOOL)deleteOldEnvelopeItems;
 
@@ -31,7 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
          deleteOldEnvelopeItems:(BOOL)deleteOldEnvelopeItems
                 threadInspector:(SentryThreadInspector *)threadInspector
              debugImageProvider:(SentryDebugImageProvider *)debugImageProvider
-                         random:(id<SentryRandom>)random
+                         random:(id<SentryRandomProtocol>)random
                          locale:(NSLocale *)locale
                        timezone:(NSTimeZone *)timezone;
 

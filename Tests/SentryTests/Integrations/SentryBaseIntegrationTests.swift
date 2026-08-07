@@ -1,4 +1,4 @@
-@testable import Sentry
+@_spi(Private) @testable import Sentry
 import XCTest
 
 class MyTestIntegration: SentryBaseIntegration {
@@ -11,22 +11,22 @@ class SentryBaseIntegrationTests: XCTestCase {
     var logOutput: TestLogOutput!
     var oldDebug: Bool!
     var oldLevel: SentryLevel!
-    var oldOutput: SentryLogOutputProtocol!
+    var oldOutput: SentryLogOutput!
 
     override func setUp() {
         super.setUp()
-        oldDebug = SentryLog.isDebug
-        oldLevel = SentryLog.diagnosticLevel
-        SentryLog.configure(true, diagnosticLevel: SentryLevel.debug)
-        oldOutput = SentryLog.getOutput()
+        oldDebug = SentrySDKLog.isDebug
+        oldLevel = SentrySDKLog.diagnosticLevel
+        SentrySDKLogSupport.configure(true, diagnosticLevel: SentryLevel.debug)
+        oldOutput = SentrySDKLog.getOutput()
         logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
+        SentrySDKLog.setLogOutput(logOutput)
     }
 
     override func tearDown() {
         super.tearDown()
-        SentryLog.configure(oldDebug, diagnosticLevel: oldLevel)
-        SentryLog.setLogOutput(oldOutput)
+        SentrySDKLogSupport.configure(oldDebug, diagnosticLevel: oldLevel)
+        SentrySDKLog.setOutput(oldOutput)
     }
 
     func testIntegrationName() {

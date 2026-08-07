@@ -1,4 +1,5 @@
-import SentryTestUtils
+@_spi(Private) import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
@@ -17,15 +18,19 @@ class SentryAppStateManagerTests: XCTestCase {
             options = Options()
             options.dsn = SentryAppStateManagerTests.dsnAsString
             options.releaseName = TestData.appState.releaseName
-
-            fileManager = try! SentryFileManager(options: options, dispatchQueueWrapper: dispatchQueue)
+            
+            fileManager = try! SentryFileManager(
+                options: options,
+                dateProvider: currentDate,
+                dispatchQueueWrapper: dispatchQueue
+            )
         }
 
         func getSut() -> SentryAppStateManager {
             SentryDependencyContainer.sharedInstance().sysctlWrapper = TestSysctl()
             return SentryAppStateManager(
                 options: options,
-                crashWrapper: TestSentryCrashWrapper.sharedInstance(),
+                crashWrapper: TestSentryCrashWrapper(processInfoWrapper: ProcessInfo.processInfo),
                 fileManager: fileManager,
                 dispatchQueueWrapper: TestSentryDispatchQueueWrapper(),
                 notificationCenterWrapper: notificationCenterWrapper
@@ -103,7 +108,7 @@ class SentryAppStateManagerTests: XCTestCase {
         sut.stop(withForce: true)
         XCTAssertEqual(sut.startCount, 0)
 
-        XCTAssertEqual(fixture.notificationCenterWrapper.removeObserverWithNameInvocations.count, 4)
+        XCTAssertEqual(fixture.notificationCenterWrapper.removeObserverWithNameAndObjectInvocations.count, 4)
     }
 
     func testUpdateAppState() {

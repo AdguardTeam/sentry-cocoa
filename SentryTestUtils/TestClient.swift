@@ -1,9 +1,19 @@
 import _SentryPrivate
 import Foundation
+@_spi(Private) import Sentry
 
 public class TestClient: SentryClient {
     public override init?(options: Options) {
-        super.init(options: options, fileManager: try! TestFileManager(options: options), deleteOldEnvelopeItems: false, transportAdapter: TestTransportAdapter(transports: [TestTransport()], options: options))
+        super.init(
+            options: options,
+            fileManager: try! TestFileManager(
+                options: options,
+                dateProvider: TestCurrentDateProvider(),
+                dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+            ),
+            deleteOldEnvelopeItems: false,
+            transportAdapter: TestTransportAdapter(transports: [TestTransport()], options: options)
+        )
     }
 
     public override init?(options: Options, fileManager: SentryFileManager, deleteOldEnvelopeItems: Bool) {
@@ -16,7 +26,7 @@ public class TestClient: SentryClient {
     
     // Without this override we get a fatal error: use of unimplemented initializer
     // see https://stackoverflow.com/questions/28187261/ios-swift-fatal-error-use-of-unimplemented-initializer-init
-    public override init(options: Options, transportAdapter: SentryTransportAdapter, fileManager: SentryFileManager, deleteOldEnvelopeItems: Bool, threadInspector: SentryThreadInspector, debugImageProvider: SentryDebugImageProvider, random: SentryRandomProtocol, locale: Locale, timezone: TimeZone) {
+    @_spi(Private) public override init(options: Options, transportAdapter: SentryTransportAdapter, fileManager: SentryFileManager, deleteOldEnvelopeItems: Bool, threadInspector: SentryThreadInspector, debugImageProvider: SentryDebugImageProvider, random: SentryRandomProtocol, locale: Locale, timezone: TimeZone) {
         super.init(
             options: options,
             transportAdapter: transportAdapter,
@@ -30,7 +40,9 @@ public class TestClient: SentryClient {
         )
     }
     
+    @_spi(Private)
     public var captureSessionInvocations = Invocations<SentrySession>()
+    @_spi(Private)
     public override func capture(session: SentrySession) {
         captureSessionInvocations.record(session)
     }
@@ -41,8 +53,8 @@ public class TestClient: SentryClient {
         return event.eventId
     }
     
-    public var captureEventWithScopeInvocations = Invocations<(event: Event, scope: Scope, additionalEnvelopeItems: [SentryEnvelopeItem])>()
-    public override func capture(event: Event, scope: Scope, additionalEnvelopeItems: [SentryEnvelopeItem]) -> SentryId {
+    @_spi(Private) public var captureEventWithScopeInvocations = Invocations<(event: Event, scope: Scope, additionalEnvelopeItems: [SentryEnvelopeItem])>()
+    @_spi(Private) public override func capture(event: Event, scope: Scope, additionalEnvelopeItems: [SentryEnvelopeItem]) -> SentryId {
         captureEventWithScopeInvocations.record((event, scope, additionalEnvelopeItems))
         return event.eventId
     }
@@ -84,27 +96,33 @@ public class TestClient: SentryClient {
     }
 
     public var callSessionBlockWithIncrementSessionErrors = true
+    @_spi(Private)
     public var captureErrorWithSessionInvocations = Invocations<(error: Error, session: SentrySession?, scope: Scope)>()
+    @_spi(Private)
     public override func captureError(_ error: Error, with scope: Scope, incrementSessionErrors sessionBlock: @escaping () -> SentrySession) -> SentryId {
         captureErrorWithSessionInvocations.record((error, callSessionBlockWithIncrementSessionErrors ? sessionBlock() : nil, scope))
         return SentryId()
     }
     
+    @_spi(Private)
     public var captureExceptionWithSessionInvocations = Invocations<(exception: NSException, session: SentrySession?, scope: Scope)>()
+    @_spi(Private)
     public override func capture(_ exception: NSException, with scope: Scope, incrementSessionErrors sessionBlock: @escaping () -> SentrySession) -> SentryId {
         captureExceptionWithSessionInvocations.record((exception, callSessionBlockWithIncrementSessionErrors ? sessionBlock() : nil, scope))
         return SentryId()
     }
     
-    public var captureCrashEventInvocations = Invocations<(event: Event, scope: Scope)>()
-    public override func captureCrash(_ event: Event, with scope: Scope) -> SentryId {
-        captureCrashEventInvocations.record((event, scope))
+    public var captureFatalEventInvocations = Invocations<(event: Event, scope: Scope)>()
+    public override func captureFatalEvent(_ event: Event, with scope: Scope) -> SentryId {
+        captureFatalEventInvocations.record((event, scope))
         return SentryId()
     }
     
-    public var captureCrashEventWithSessionInvocations = Invocations<(event: Event, session: SentrySession, scope: Scope)>()
-    public override func captureCrash(_ event: Event, with session: SentrySession, with scope: Scope) -> SentryId {
-        captureCrashEventWithSessionInvocations.record((event, session, scope))
+    @_spi(Private)
+    public var captureFatalEventWithSessionInvocations = Invocations<(event: Event, session: SentrySession, scope: Scope)>()
+    @_spi(Private)
+    public override func captureFatalEvent(_ event: Event, with session: SentrySession, with scope: Scope) -> SentryId {
+        captureFatalEventWithSessionInvocations.record((event, session, scope))
         return SentryId()
     }
     
@@ -125,13 +143,18 @@ public class TestClient: SentryClient {
         captureFeedbackInvocations.record((feedback, scope))
     }
     
-    public var captureEnvelopeInvocations = Invocations<SentryEnvelope>()
-    public override func capture(_ envelope: SentryEnvelope) {
+    public var captureSerializedFeedbackInvocations = Invocations<(String, Scope)>()
+    public override func captureSerializedFeedback(_ serializedFeedback: [AnyHashable: Any], withEventId feedbackEventId: String, attachments: [Attachment], scope: Scope) {
+        captureSerializedFeedbackInvocations.record((feedbackEventId, scope))
+    }
+    
+    @_spi(Private) public var captureEnvelopeInvocations = Invocations<SentryEnvelope>()
+    @_spi(Private) public override func capture(_ envelope: SentryEnvelope) {
         captureEnvelopeInvocations.record(envelope)
     }
     
-    public var storedEnvelopeInvocations = Invocations<SentryEnvelope>()
-    public override func store(_ envelope: SentryEnvelope) {
+    @_spi(Private) public var storedEnvelopeInvocations = Invocations<SentryEnvelope>()
+    @_spi(Private) public override func store(_ envelope: SentryEnvelope) {
         storedEnvelopeInvocations.record(envelope)
     }
     
@@ -149,61 +172,9 @@ public class TestClient: SentryClient {
     public override func flush(timeout: TimeInterval) {
         flushInvocations.record(timeout)
     }
-}
-
-public class TestFileManager: SentryFileManager {
-    var timestampLastInForeground: Date?
-    var readTimestampLastInForegroundInvocations: Int = 0
-    var storeTimestampLastInForegroundInvocations: Int = 0
-    var deleteTimestampLastInForegroundInvocations: Int = 0
-
-    public var storeEnvelopeInvocations = Invocations<SentryEnvelope>()
-    public var storeEnvelopePath: String?
-    public var storeEnvelopePathNil: Bool = false
     
-    public init(options: Options) throws {
-        try super.init(options: options, dispatchQueueWrapper: TestSentryDispatchQueueWrapper())
-    }
-    
-    public override func store(_ envelope: SentryEnvelope) -> String? {
-        storeEnvelopeInvocations.record(envelope)
-        if storeEnvelopePathNil {
-            return nil
-        } else {
-            return storeEnvelopePath ?? super.store(envelope)
-        }
-    }
-    
-    public var deleteOldEnvelopeItemsInvocations = Invocations<Void>()
-    public override func deleteOldEnvelopeItems() {
-        deleteOldEnvelopeItemsInvocations.record(Void())
-    }
-
-    public override func readTimestampLastInForeground() -> Date? {
-        readTimestampLastInForegroundInvocations += 1
-        return timestampLastInForeground
-    }
-
-    public override func storeTimestampLast(inForeground: Date) {
-        storeTimestampLastInForegroundInvocations += 1
-        timestampLastInForeground = inForeground
-    }
-
-    public override func deleteTimestampLastInForeground() {
-        deleteTimestampLastInForegroundInvocations += 1
-        timestampLastInForeground = nil
-    }
-    
-    var readAppStateInvocations = Invocations<Void>()
-    public override func readAppState() -> SentryAppState? {
-        readAppStateInvocations.record(Void())
-        return nil
-    }
-
-    var appState: SentryAppState?
-    public var readPreviousAppStateInvocations = Invocations<Void>()
-    public override func readPreviousAppState() -> SentryAppState? {
-        readPreviousAppStateInvocations.record(Void())
-        return appState
+    public var captureLogsDataInvocations = Invocations<(data: Data, count: NSNumber)>()
+    public override func captureLogsData(_ data: Data, with count: NSNumber) {
+        captureLogsDataInvocations.record((data, count))
     }
 }

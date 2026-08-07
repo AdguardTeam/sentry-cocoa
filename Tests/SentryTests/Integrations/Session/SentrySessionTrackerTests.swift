@@ -1,5 +1,5 @@
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 class SentrySessionTrackerTests: XCTestCase {
@@ -13,9 +13,17 @@ class SentrySessionTrackerTests: XCTestCase {
         let client: TestClient!
         let sentryCrash: TestSentryCrashWrapper
 
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        let _application: TestSentryUIApplication
+        #else
+        let _application: TestSentryNSApplication
+        #endif
+        var application: SentryApplication? {
+            _application
+        }
         let notificationCenter = TestNSNotificationCenterWrapper()
         let dispatchQueue = TestSentryDispatchQueueWrapper()
-        lazy var fileManager = try! SentryFileManager(options: options, dispatchQueueWrapper: dispatchQueue)
+        lazy var fileManager = try! SentryFileManager(options: options, dateProvider: currentDateProvider, dispatchQueueWrapper: dispatchQueue)
         
         init() {
             options = Options()
@@ -26,16 +34,33 @@ class SentrySessionTrackerTests: XCTestCase {
             
             client = TestClient(options: options)
             
-            sentryCrash = TestSentryCrashWrapper.sharedInstance()
+            sentryCrash = TestSentryCrashWrapper(processInfoWrapper: ProcessInfo.processInfo)
+
+            #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+            _application = TestSentryUIApplication()
+            _application.unsafeApplicationState = .inactive
+            #else
+            _application = TestSentryNSApplication()
+            _application.setIsActive(false)
+            #endif
         }
         
+        let sessionDispatchQueue = TestSentryDispatchQueueWrapper()
+
         func getSut() -> SessionTracker {
-            return SessionTracker(options: options, notificationCenter: notificationCenter)
+            let application = self.application
+            return SessionTracker(
+                options: options,
+                applicationProvider: { application },
+                dateProvider: currentDateProvider,
+                notificationCenter: notificationCenter,
+                dispatchQueue: sessionDispatchQueue
+            )
         }
         
         func setNewHubToSDK() {
             let hub = SentryHub(client: client, andScope: nil, andCrashWrapper: self.sentryCrash, andDispatchQueue: SentryDispatchQueueWrapper())
-            SentrySDK.setCurrentHub(hub)
+            SentrySDKInternal.setCurrentHub(hub)
         }
     }
     
@@ -51,123 +76,152 @@ class SentrySessionTrackerTests: XCTestCase {
         super.setUp()
         
         fixture = Fixture()
-        
+
         SentryDependencyContainer.sharedInstance().dateProvider = fixture.currentDateProvider
 
         fixture.fileManager.deleteCurrentSession()
         fixture.fileManager.deleteCrashedSession()
         fixture.fileManager.deleteTimestampLastInForeground()
-        
+
         fixture.setNewHubToSDK()
-        
+
         sut = fixture.getSut()
     }
     
     override func tearDown() {
-        sut.stop()
+        abnormalStopSut()
         clearTestState()
-        
+
         super.tearDown()
     }
-    
-    func testOnlyForeground() {
-        sut.start()
+
+    func testOnlyForeground() throws {
+        // -- Arrange --
+        startSutInAppDelegate()
+
+        // -- Act --
         goToForeground()
-        
-        assertInitSessionSent()
+
+        // -- Assert --
+        try assertInitSessionSent()
         assertSessionStored()
     }
     
-    func testOnlyHybridSdkDidBecomeActive() {
+    func testOnlyHybridSdkDidBecomeActive() throws {
+        // -- Arrange --
+        // In this test case the application state is unknown for the hybrid SDK.
         sut.start()
+
+        // -- Act --
         hybridSdkDidBecomeActive()
-        
-        assertInitSessionSent()
+
+        // -- Assert --
+        try assertInitSessionSent()
         assertSessionStored()
     }
     
-    func testForeground_And_HybridSdkDidBecomeActive() {
-        sut.start()
+    func testForeground_And_HybridSdkDidBecomeActive() throws {
+        // -- Arrange --
+        startSutInAppDelegate()
+
+        // -- Act --
         goToForeground()
         hybridSdkDidBecomeActive()
-        
-        assertInitSessionSent()
+
+        // -- Assert --
+        try assertInitSessionSent()
         assertSessionStored()
     }
     
-    func testHybridSdkDidBecomeActive_and_Foreground() {
+    func testHybridSdkDidBecomeActive_and_Foreground() throws {
+        // -- Arrange --
         sut.start()
+
+        // -- Act --
         hybridSdkDidBecomeActive()
-        
         goToForeground()
-        
-        assertInitSessionSent()
+
+        // -- Assert --
+        try assertInitSessionSent()
         assertSessionStored()
     }
     
-    func testForeground_Background_TrackingIntervalNotReached() {
-        sut.start()
-        
-        let sessionStarted = fixture.currentDateProvider.date()
+    func testForeground_Background_TrackingIntervalNotReached() throws {
+        // -- Arrange --
+        startSutInAppDelegate()
+        let sessionStartTimestamp = fixture.currentDateProvider.date()
+
+        // -- Act --
         goToForeground()
         advanceTime(bySeconds: 11)
-        
+
         goToBackground(forSeconds: 9)
-        
-        assertSessionInitSent(sessionStarted: sessionStarted)
+
+        // -- Assert --
+        try assertSessionInitSent(sessionStarted: sessionStartTimestamp)
     }
     
     func testForeground_Background_TrackingIntervalReached() {
-        sut.start()
-        
-        let sessionStarted = fixture.currentDateProvider.date()
+        // -- Arrange --
+        startSutInAppDelegate()
+        let sessionStartTimestamp = fixture.currentDateProvider.date()
+
+        // -- Act --
         goToForeground()
         advanceTime(bySeconds: 1)
         
         goToBackground(forSeconds: 9)
-        
-        // Session not sent yet
+        // Session not sent yet, because the app needs to be in the background for a threshold time
         assertSessionsSent(count: 1)
+
+        // Advance the time to meet the threshold
         advanceTime(bySeconds: 1)
-        
         goToBackground(forSeconds: 10)
-        
-        assertEndSessionSent(started: sessionStarted, duration: 11)
+
+        // -- Assert --
+        assertEndSessionSent(started: sessionStartTimestamp, duration: 11)
     }
     
-    func testCrashInForeground_LaunchInForeground() {
+    func testCrashInForeground_LaunchInForeground() throws {
+        // -- Arrange --
         crashInForeground()
-        
-        assertAppLaunchSendsCrashedSession()
-        
+        try assertAppLaunchSendsCrashedSession()
+
+        // -- Act --
         goToForeground()
+
+        // -- Assert --
         assertSessionsSent(count: 3)
-        assertInitSessionSent()
+        try assertInitSessionSent()
     }
     
-    func testCrashInForeground_LaunchInBackground() {
+    func testCrashInForeground_LaunchInBackground() throws {
+        // -- Arrange --
         crashInForeground()
-        
-        assertAppLaunchSendsCrashedSession()
-        
+        try assertAppLaunchSendsCrashedSession()
+
+        // -- Act --
         goToBackground()
-        
+
+        // -- Assert --
         // only two sessions. First is the init, second is the crashed one,
         // but no extra init is sent.
         assertSessionsSent(count: 2)
         assertNoInitSessionSent()
     }
     
-    func testCrashInBackground_LaunchInForeground() {
+    func testCrashInBackground_LaunchInForeground() throws {
+        // -- Arrange --
         crashInBackground()
         assertNoSessionSent()
-        
+
+        // -- Act & Assert --
         sut = fixture.getSut()
-        sut.start()
+        startSutInAppDelegate()
         assertNoSessionSent()
-        
+
         goToForeground()
-        assertInitSessionSent()
+        try assertInitSessionSent()
     }
     
     func testCrashInBackground_LaunchInBackground() {
@@ -182,44 +236,56 @@ class SentrySessionTrackerTests: XCTestCase {
     }
     
     func testKillAppWithoutNotificationsAndNoCrash_EndsWithAbnormalSession() {
-        let sessionStartTime = fixture.currentDateProvider.date()
-        sut.start()
+        // -- Arrange --
+        let sessionStartTimestamp = fixture.currentDateProvider.date()
+        startSutInAppDelegate()
+
+        // -- Act --
         goToForeground()
         goToBackground(forSeconds: 2)
         advanceTime(bySeconds: 2)
-        // Terminate and goToBackground not called intenionally, because we don't want to end the session
-        sut.stop()
-        
+        // This is not a crash but an abnormal end.
+        abnormalStopSut()
+
         advanceTime(bySeconds: 1)
+
         sut = fixture.getSut()
         fixture.setNewHubToSDK()
-        
-        sut.start()
-        assertSessionSent(started: sessionStartTime, duration: 0, status: SentrySessionStatus.abnormal)
+        startSutInAppDelegate()
+
+        // -- Assert --
+        assertSessionSent(started: sessionStartTimestamp, duration: 0, status: SentrySessionStatus.abnormal)
     }
     
     func testTerminateWithoutCallingTerminateNotification() {
-        let sessionStartTime = fixture.currentDateProvider.date()
-        sut.start()
+        // -- Arrange --
+        let sessionStartTimestamp = fixture.currentDateProvider.date()
+        startSutInAppDelegate()
+
+        // -- Act --
         goToForeground()
         advanceTime(bySeconds: 5)
         goToBackground()
-        // Terminate not called intenionally, because we don't want to end the session properly
-        sut.stop()
-        
+        // This is not a crash but an abnormal end.
+        abnormalStopSut()
+
         advanceTime(bySeconds: 1)
+
         sut = fixture.getSut()
         fixture.setNewHubToSDK()
-        
-        sut.start()
-        assertSessionSent(started: sessionStartTime, duration: 5, status: SentrySessionStatus.exited)
+        startSutInAppDelegate()
+
+        // -- Assert --
+        assertSessionSent(started: sessionStartTimestamp, duration: 5, status: SentrySessionStatus.exited)
     }
     
     func testForegroundWithError() {
-        let startTime = fixture.currentDateProvider.date()
-        sut.start()
+        // -- Arrange --
+        let sessionStartTimestamp = fixture.currentDateProvider.date()
+        startSutInAppDelegate()
         goToForeground()
 
+        // -- Act --
         advanceTime(bySeconds: 1)
         captureError()
         advanceTime(bySeconds: 1)
@@ -229,12 +295,15 @@ class SentrySessionTrackerTests: XCTestCase {
         advanceTime(bySeconds: 10)
         goToForeground()
 
-        assertEndSessionSent(started: startTime, duration: 2, errors: 2)
+        // -- Assert --
+        assertEndSessionSent(started: sessionStartTimestamp, duration: 2, errors: 2)
     }
     
     func testAppNotRunning_LaunchBackgroundTask() {
+        // -- Act --
         launchBackgroundTaskAppNotRunning()
-        
+
+        // -- Assert --
         assertSessionNotStored()
         assertLastInForegroundIsNil()
         assertNoInitSessionSent()
@@ -256,7 +325,7 @@ class SentrySessionTrackerTests: XCTestCase {
         assertEndSessionSent(started: sessionStarted, duration: 1)
     }
     
-    func testAppRunning_LaunchBackgroundTaskImmediately_UserResumesApp() {
+    func testAppRunning_LaunchBackgroundTaskImmediately_UserResumesApp() throws {
         let sessionStarted = fixture.currentDateProvider.date()
         sut.start()
         goToForeground()
@@ -268,118 +337,348 @@ class SentrySessionTrackerTests: XCTestCase {
         
         // user opens app
         goToForeground()
-        assertSessionInitSent(sessionStarted: sessionStarted)
+        try assertSessionInitSent(sessionStarted: sessionStarted)
         assertSessionsSent(count: 1)
     }
     
-    func testAppNotRunning_LaunchBackgroundTask_UserOpensApp() {
+    func testAppNotRunning_LaunchBackgroundTask_UserOpensApp() throws {
+        // -- Arrange --
         launchBackgroundTaskAppNotRunning()
         advanceTime(bySeconds: 10)
-        
+
+        // -- Act --
         // user opens app
         let sessionStarted = fixture.currentDateProvider.date()
         goToForeground()
-        assertInitSessionSent()
-        
+        try assertInitSessionSent()
+
         advanceTime(bySeconds: 1)
         
         goToBackground(forSeconds: 10)
-        
+
+        // -- Assert --
         assertEndSessionSent(started: sessionStarted, duration: 1)
     }
-    
-    func testForeground_Background_Terminate_LaunchAgain() {
+
+    func testForeground_Background_Terminate_LaunchAgain() throws {
+        // -- Arrange --
         let sessionStartTime = fixture.currentDateProvider.date()
-        sut.start()
+        startSutInAppDelegate()
+
+        // -- Act --
         goToForeground()
         advanceTime(bySeconds: 1)
         goToBackground()
-        
+
         advanceTime(bySeconds: 10)
         terminateApp()
         assertEndSessionSent(started: sessionStartTime, duration: 1)
-        sut.stop()
-        
+        abnormalStopSut()
+
         advanceTime(bySeconds: 1)
-        
+
         // Launch the app again
         fixture.setNewHubToSDK()
+
         sut = fixture.getSut()
-        sut.start()
-        
+
+        startSutInAppDelegate()
         goToForeground()
-        assertInitSessionSent()
+
+        // -- Assert --
+        try assertInitSessionSent()
     }
     
     func testAppNotRunning_LaunchFromBackground_Terminate() {
+        // -- Arrange --
         launchBackgroundTaskAppNotRunning()
-        
+
+        // -- Act --
         terminateApp()
-        
+
+        // -- Assert --
         assertNoSessionSent()
     }
     
     func testAppRunningInForeground_LaunchFromBackground_Terminate() {
+        // -- Arrange --
         let startTime = fixture.currentDateProvider.date()
-        sut.start()
+        startSutInAppDelegate()
+
+        // -- Act --
         goToForeground()
         advanceTime(bySeconds: 2)
         goToBackground()
         
         terminateApp()
-        
+
+        // -- Assert --
         assertEndSessionSent(started: startTime, duration: 2)
     }
     
-    func testForeground_Background_Foreground_NoSessionToEnd() {
-        sut.start()
+    func testForeground_Background_Foreground_NoSessionToEnd() throws {
+        // -- Arrange --
+        startSutInAppDelegate()
+
+        // -- Act --
         goToForeground()
         goToBackground()
         advanceTime(bySeconds: 10)
         
         fixture.setNewHubToSDK()
         goToForeground()
-        
-        assertInitSessionSent()
+
+        // -- Assert --
+        try assertInitSessionSent()
         assertSessionsSent(count: 2)
     }
     
-    func testStart_AddsObservers() {
+    func testStart_AddsObservers() throws {
+        // -- Act --
+        startSutInAppDelegate()
+
+        // -- Assert --
+        let invocations = fixture.notificationCenter.addObserverWithObjectInvocations
+        let notificationNames = try invocations.invocations.map { try XCTUnwrap($0.name) }
+        
+        assertNotificationNames(notificationNames)
+    }
+    
+    func testStop_RemovesObservers() throws {
+        // -- Act --
+        stopSut()
+
+        // -- Assert --
+        let invocations = fixture.notificationCenter.removeObserverWithNameAndObjectInvocations
+        let notificationNames = try invocations.invocations.map { try XCTUnwrap($0.name) }
+        
+        assertNotificationNames(notificationNames)
+    }
+
+    func testForegroundBeforeStart_shoudStartSession() throws {
+        // -- Arrange --
+        goToForeground()
+
+        // Pre-condition: No session should be sent yet
+        assertNoSessionSent()
+
+        // -- Act --
         sut.start()
+
+        // -- Assert --
+        XCTAssertEqual(fixture.client.captureSessionInvocations.invocations.count, 1)
+        let startSessionEvent = try XCTUnwrap(fixture.client.captureSessionInvocations.invocations.element(at: 0))
+        XCTAssertEqual(startSessionEvent.status, SentrySessionStatus.ok)
+    }
+
+    func testRestartInForeground_shouldStartNewSession() throws {
+        // -- Arrange --
+        startSutInAppDelegate()
+        goToForeground()
+
+        // -- Act --
+        XCTAssertEqual(fixture.client.captureSessionInvocations.invocations.count, 1)
+        var event = try XCTUnwrap(fixture.client.captureSessionInvocations.invocations.element(at: 0))
+        XCTAssertEqual(event.status, SentrySessionStatus.ok)
+
+        stopSut()
+
+        XCTAssertEqual(fixture.client.captureSessionInvocations.invocations.count, 2)
+        event = try XCTUnwrap(fixture.client.captureSessionInvocations.invocations.element(at: 1))
+        XCTAssertEqual(event.status, SentrySessionStatus.exited)
+
+        sut.start()
+
+        // -- Assert --
+        XCTAssertEqual(fixture.client.captureSessionInvocations.invocations.count, 3)
+        event = try XCTUnwrap(fixture.client.captureSessionInvocations.invocations.element(at: 2))
+        XCTAssertEqual(event.status, SentrySessionStatus.ok)
+    }
+
+    func testForeground_ThenHybridSdkNotification_ShouldDebounceSessionStart() throws {
+        // -- Arrange --
+        startSutInAppDelegate()
+        let sessionStartTimestamp = fixture.currentDateProvider.date()
+
+        // -- Act --
+        // First, the app goes to foreground (starts a session)
+        goToForeground()
         
-        let invocations = fixture.notificationCenter.addObserverInvocations
-        let notificationNames = invocations.invocations.map { $0.name }
-        
-        assertNotificationNames(notificationNames)
+        // Then immediately, the hybrid SDK posts its notification
+        // This should be debounced and not start a new session
+        postHybridSdkDidBecomeActiveNotification()
+
+        // -- Assert --
+        // Should only have one session (the init session), not two
+        assertSessionsSent(count: 1)
+        try assertSessionInitSent(sessionStarted: sessionStartTimestamp)
+        assertSessionStored()
     }
     
-    func testStop_RemovesObservers() {
+    func testHybridSdkNotification_ThenForeground_ShouldDebounceSessionStart() throws {
+        // -- Arrange --
+        startSutInAppDelegate()
+        let sessionStartTimestamp = fixture.currentDateProvider.date()
+
+        // -- Act --
+        // First, the hybrid SDK posts its notification (starts a session)
+        postHybridSdkDidBecomeActiveNotification()
+        
+        // Then immediately, the app goes to foreground
+        // This should be debounced and not start a new session
+        goToForeground()
+
+        // -- Assert --
+        // Should only have one session (the init session), not two
+        assertSessionsSent(count: 1)
+        try assertSessionInitSent(sessionStarted: sessionStartTimestamp)
+        assertSessionStored()
+    }
+
+    // MARK: - Helpers
+
+    private func startSutInAppDelegate() {
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        // The Sentry SDK should be initialized in the `UIAppDelegate.didFinishLaunchingWithOptions`
+        // At this point the application state is `inactive`, because the app just launched but did not
+        // become the active app yet.
+        //
+        // This can be observed by viewing the application state in `UIAppDelegate.didFinishLaunchingWithOptions`.
+        fixture._application.unsafeApplicationState = .inactive
+        #else
+        // The Sentry SDK should be initialized in the `NSApplicationDelegate.applicationDidFinishLaunching`
+        // At this point the app is not active yet.
+        //
+        // This can be observed by checking `NSApplication.shared.isActive` in `NSApplicationDelegate.applicationDidFinishLaunching`.
+        fixture._application.setIsActive(false)
+        #endif
+        sut.start()
+    }
+
+    private func stopSut() {
         sut.stop()
-        
-        let invocations = fixture.notificationCenter.removeObserverWithNameInvocations
-        let notificationNames = invocations.invocations.map { $0 }
-        
-        assertNotificationNames(notificationNames)
+        // After stopping the session tracker, we need to set a new hub to the SDK.
+        fixture.setNewHubToSDK()
     }
-    
+
+    private func abnormalStopSut() {
+
+        // We remove the observers, to ensure future notifications are not handled.
+        sut.removeObservers()
+
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        // When the app stops, the app state is `inactive`.
+        // This can be observed by viewing the application state in `UIAppDelegate.applicationDidEnterBackground`.
+        fixture._application.unsafeApplicationState = .inactive
+        #else
+        // When the app crashes, the app state is `inactive`.
+        //
+        // This can not be observed in the view life cycle methods and is an assumption until proven otherwise.
+        // macOS does not have a `applicationDidEnterBackground` method, so we can't observe the app state.
+        fixture._application.setIsActive(false)
+        #endif
+    }
+
+    private func crashSut() {
+        sut.removeObservers()
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        // When the app stops, the app state is `inactive`.
+        //
+        // This can be observed by viewing the application state in `UIAppDelegate.applicationDidEnterBackground`.
+        fixture._application.unsafeApplicationState = .inactive
+        #else
+        // When the app crashes, the app state is `inactive`.
+        //
+        // This can not be observed in the view life cycle methods and is an assumption until proven otherwise.
+        // macOS does not have a `applicationDidEnterBackground` method, so we can't observe the app state.
+        fixture._application.setIsActive(false)
+        #endif
+        fixture.sentryCrash.internalCrashedLastLaunch = true
+    }
+
     private func advanceTime(bySeconds: TimeInterval) {
         fixture.currentDateProvider.setDate(date: fixture.currentDateProvider.date().addingTimeInterval(bySeconds))
     }
     
     private func goToForeground() {
-        Dynamic(sut).didBecomeActive()
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        // When the app becomes active, the app state is `active`.
+        // This can be observed by viewing the application state in `UIAppDelegate.applicationDidBecomeActive`.
+        fixture._application.unsafeApplicationState = .active
+        #else
+        // When the app becomes active, the app state is `active`.
+        // This can be observed by viewing the application state in `NSApplicationDelegate.applicationDidBecomeActive`.
+        fixture._application.setIsActive(true)
+        #endif
+        fixture.notificationCenter
+            .post(
+                Notification(
+                    name: CrossPlatformApplication.didBecomeActiveNotification,
+                    object: nil,
+                    userInfo: nil
+                )
+            )
     }
     
     private func goToBackground() {
+        // Before an app goes to background, it is still active and will resign from being active.
         willResignActive()
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        // It is expected that the app state is background when the didEnterBackground is called
+        fixture._application.unsafeApplicationState = .background
+        fixture.notificationCenter
+           .post(
+               Notification(
+                  name: UIApplication.didEnterBackgroundNotification,
+                   object: nil,
+                   userInfo: nil
+               )
+           )
+        #else
+        // When the app becomes active, the app state is `active`.
+        //
+        // This can be observed by viewing the application state in `NSAppDelegate.applicationDidResignActive`.
+        fixture._application.setIsActive(false)
+        #endif
     }
     
     private func willResignActive() {
-        Dynamic(sut).willResignActive()
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        // When the app is about to resign being active, it is still active.
+        //
+        // This can be observed by viewing the application state in `UIAppDelegate.applicationWillResignActive`.
+        fixture._application.unsafeApplicationState = .active
+        #else
+        // When the app becomes active, the app state is `active`.
+        //
+        // This can be observed by viewing the application state in `NSAppDelegate.applicationWillResignActive`.
+        fixture._application.setIsActive(true)
+        #endif
+        fixture.notificationCenter
+            .post(
+                Notification(
+                    name: CrossPlatformApplication.willResignActiveNotification,
+                    object: nil,
+                    userInfo: nil
+                )
+            )
     }
     
     private func hybridSdkDidBecomeActive() {
-        Dynamic(sut).didBecomeActive()
+        // When an app did become active, it is in the active state.
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        fixture._application.unsafeApplicationState = .active
+        #else
+        fixture._application.setIsActive(true)
+        #endif
+        fixture.notificationCenter
+            .post(
+                Notification(
+                    name: CrossPlatformApplication.didBecomeActiveNotification,
+                    object: nil,
+                    userInfo: nil
+                )
+            )
     }
     
     private func goToBackground(forSeconds: TimeInterval) {
@@ -389,20 +688,41 @@ class SentrySessionTrackerTests: XCTestCase {
     }
     
     private  func willTerminate() {
-        Dynamic(sut).willTerminate()
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        // When terminating an app, it will first move to the background and then terminate.
+        //
+        // This can be observed by viewing the application state in `UIAppDelegate.applicationWillTerminate`.
+        fixture._application.unsafeApplicationState = .background
+        #else
+        // When terminating an app, it will first move to the background and then terminate.
+        //
+        // This can be observed by viewing the application state in `NSApplicationDelegate.applicationWillTerminate`.
+        //
+        // Important: According to the documentation, this method isn't called during sudden termination of an app.
+        fixture._application.setIsActive(false)
+        #endif
+        fixture.notificationCenter
+            .post(
+                Notification(
+                    name: CrossPlatformApplication.willTerminateNotification,
+                    object: nil,
+                    userInfo: nil
+                )
+            )
     }
     
     private func terminateApp() {
         willTerminate()
-        sut.stop()
+        abnormalStopSut()
     }
     
     private func launchBackgroundTaskAppNotRunning() {
-        sut.stop()
+        sut.removeObservers()
+
         fixture.setNewHubToSDK()
         sut = fixture.getSut()
         
-        sut.start()
+        startSutInAppDelegate()
     }
     
     private func captureError() {
@@ -410,31 +730,29 @@ class SentrySessionTrackerTests: XCTestCase {
     }
     
     private func crashInForeground() {
-        sut.start()
+        startSutInAppDelegate()
         goToForeground()
-        // Terminate and background not called intenionally, because the app crashed
-        sut.stop()
-        fixture.sentryCrash.internalCrashedLastLaunch = true
+        crashSut()
     }
     
     private func crashInBackground() {
-        sut.start()
+        startSutInAppDelegate()
         goToBackground()
-        // Terminate not called intenionally, because the app crashed
-        sut.stop()
-        fixture.sentryCrash.internalCrashedLastLaunch = true
+        crashSut()
+    }
+
+    // MARK: - Assertion Helpers
+
+    private func assertSessionNotStored(file: StaticString = #file, line: UInt = #line) {
+        XCTAssertNil(fixture.fileManager.readCurrentSession(), file: file, line: line)
     }
     
-    private func assertSessionNotStored() {
-        XCTAssertNil(fixture.fileManager.readCurrentSession())
+    private func assertSessionStored(file: StaticString = #file, line: UInt = #line) {
+        XCTAssertNotNil(fixture.fileManager.readCurrentSession(), file: file, line: line)
     }
     
-    private func assertSessionStored() {
-        XCTAssertNotNil(fixture.fileManager.readCurrentSession())
-    }
-    
-    private func assertNoSessionSent() {
-        XCTAssertEqual(0, fixture.client.captureSessionInvocations.count)
+    private func assertNoSessionSent(file: StaticString = #file, line: UInt = #line) {
+        XCTAssertEqual(0, fixture.client.captureSessionInvocations.count, file: file, line: line)
     }
     
     private func assertEndSessionSent(started: Date, duration: NSNumber, errors: UInt = 0) {
@@ -443,30 +761,27 @@ class SentrySessionTrackerTests: XCTestCase {
         // init after sending the end of the session.
         let endSessionIndex = fixture.client.captureSessionInvocations.count - 2
         
-        if fixture.client.captureSessionInvocations.invocations.indices.contains(endSessionIndex) {
-            let session = fixture.client.captureSessionInvocations.invocations[endSessionIndex]
-            XCTAssertFalse(session.flagInit?.boolValue ?? false)
-            XCTAssertEqual(started, session.started)
-            XCTAssertEqual(SentrySessionStatus.exited.description, session.status.description)
-            XCTAssertEqual(errors, session.errors)
-            XCTAssertEqual(started.addingTimeInterval(TimeInterval(truncating: duration)), session.timestamp)
-            XCTAssertEqual(duration, session.duration)
-            assertSessionFields(session: session)
-        } else {
-            XCTFail("Can't find EndSession.")
+        guard fixture.client.captureSessionInvocations.invocations.indices.contains(endSessionIndex) else {
+            return XCTFail("Can't find EndSession.")
         }
+        let session = fixture.client.captureSessionInvocations.invocations[endSessionIndex]
+        XCTAssertFalse(session.flagInit?.boolValue ?? false)
+        XCTAssertEqual(started, session.started)
+        XCTAssertEqual(SentrySessionStatus.exited.description, session.status.description)
+        XCTAssertEqual(errors, session.errors)
+        XCTAssertEqual(started.addingTimeInterval(TimeInterval(truncating: duration)), session.timestamp)
+        XCTAssertEqual(duration, session.duration)
+        assertSessionFields(session: session)
     }
     
     private func assertSessionSent(started: Date, duration: NSNumber, status: SentrySessionStatus) {
-
         let endSessionIndex = fixture.client.captureSessionInvocations.count - 1
 
-        if fixture.client.captureSessionInvocations.invocations.indices.contains(endSessionIndex) {
-            let session = fixture.client.captureSessionInvocations.invocations[endSessionIndex]
-            assertSession(session: session, started: started, status: status, duration: duration)
-        } else {
-            XCTFail("Can't find session.")
+        guard fixture.client.captureSessionInvocations.invocations.indices.contains(endSessionIndex) else {
+            return XCTFail("Can't find session.")
         }
+        let session = fixture.client.captureSessionInvocations.invocations[endSessionIndex]
+        assertSession(session: session, started: started, status: status, duration: duration)
     }
     
     private func assertSession(session: SentrySession, started: Date, status: SentrySessionStatus, duration: NSNumber) {
@@ -479,24 +794,21 @@ class SentrySessionTrackerTests: XCTestCase {
         assertSessionFields(session: session)
     }
 
-    private func assertInitSessionSent() {
-        assertSessionInitSent(sessionStarted: fixture.currentDateProvider.date())
+    private func assertInitSessionSent() throws {
+        try assertSessionInitSent(sessionStarted: fixture.currentDateProvider.date())
     }
-    
-    private func assertSessionInitSent(sessionStarted: Date) {
-        if let session = fixture.client.captureSessionInvocations.last {
-            XCTAssertTrue(session.flagInit?.boolValue ?? false)
-            XCTAssertEqual(sessionStarted, session.started)
-            XCTAssertEqual(SentrySessionStatus.ok.description, session.status.description)
-            XCTAssertEqual(0, session.errors)
-            XCTAssertNil(session.timestamp)
-            XCTAssertNil(session.duration)
-            assertSessionFields(session: session)
-        } else {
-            XCTFail("No session init sent.")
-        }
+
+    private func assertSessionInitSent(sessionStarted: Date) throws {
+        let session = try XCTUnwrap(fixture.client.captureSessionInvocations.last)
+        XCTAssertTrue(session.flagInit?.boolValue ?? false)
+        XCTAssertEqual(sessionStarted, session.started)
+        XCTAssertEqual(SentrySessionStatus.ok.description, session.status.description)
+        XCTAssertEqual(0, session.errors)
+        XCTAssertNil(session.timestamp)
+        XCTAssertNil(session.duration)
+        assertSessionFields(session: session)
     }
-    
+
     private func assertSessionFields(session: SentrySession) {
         XCTAssertNotNil(session.sessionId)
         XCTAssertNotNil(session.distinctId)
@@ -504,8 +816,8 @@ class SentrySessionTrackerTests: XCTestCase {
         XCTAssertNil(session.user)
     }
     
-    private func assertNoInitSessionSent() {
-        let eventWithSessions = fixture.client.captureCrashEventWithSessionInvocations.invocations.map({ triple in triple.session })
+    private func assertNoInitSessionSent(file: StaticString = #file, line: UInt = #line) {
+        let eventWithSessions = fixture.client.captureFatalEventWithSessionInvocations.invocations.map({ triple in triple.session })
         let errorWithSessions = fixture.client.captureErrorWithSessionInvocations.invocations.map({ triple in triple.session })
         let exceptionWithSessions = fixture.client.captureExceptionWithSessionInvocations.invocations.map({ triple in triple.session })
         
@@ -514,30 +826,30 @@ class SentrySessionTrackerTests: XCTestCase {
         sessions.sort { first, second in return first!.started < second!.started }
         
         if let session = sessions.last {
-            XCTAssertFalse(session?.flagInit?.boolValue ?? false)
+            XCTAssertFalse(session?.flagInit?.boolValue ?? false, file: file, line: line)
         }
     }
     
-    private func assertSessionsSent(count: Int) {
-        let eventWithSessions = fixture.client.captureCrashEventWithSessionInvocations.count
+    private func assertSessionsSent(count: Int, file: StaticString = #file, line: UInt = #line) {
+        let eventWithSessions = fixture.client.captureFatalEventWithSessionInvocations.count
         let errorWithSessions = fixture.client.captureErrorWithSessionInvocations.count
         let exceptionWithSessions = fixture.client.captureExceptionWithSessionInvocations.count
         let sessions = fixture.client.captureSessionInvocations.count
         
         let sessionsSent = eventWithSessions + errorWithSessions + exceptionWithSessions + sessions
         
-        XCTAssertEqual(count, sessionsSent)
+        XCTAssertEqual(count, sessionsSent, file: file, line: line)
+    }
+
+    private func assertLastInForegroundIsNil(file: StaticString = #file, line: UInt = #line) {
+        XCTAssertNil(fixture.fileManager.readTimestampLastInForeground(), file: file, line: line)
     }
     
-    private func assertLastInForegroundIsNil() {
-        XCTAssertNil(fixture.fileManager.readTimestampLastInForeground())
+    private func assertLastInForegroundStored(file: StaticString = #file, line: UInt = #line) {
+        XCTAssertEqual(fixture.currentDateProvider.date(), fixture.fileManager.readTimestampLastInForeground(), file: file, line: line)
     }
     
-    private func assertLastInForegroundStored() {
-        XCTAssertEqual(fixture.currentDateProvider.date(), fixture.fileManager.readTimestampLastInForeground())
-    }
-    
-    private func assertAppLaunchSendsCrashedSession() {
+    private func assertAppLaunchSendsCrashedSession() throws {
         fixture.setNewHubToSDK()
         sut = fixture.getSut()
         let sessionStartTime = fixture.currentDateProvider.date()
@@ -550,24 +862,38 @@ class SentrySessionTrackerTests: XCTestCase {
         crashedSession.endCrashed(withTimestamp: fixture.currentDateProvider.date())
         fixture.fileManager.storeCrashedSession(crashedSession)
         
-        sut.start()
-        SentrySDK.captureCrash(Event())
+        startSutInAppDelegate()
+        SentrySDKInternal.captureFatalEvent(Event())
         
-        if let session = fixture.client.captureCrashEventWithSessionInvocations.last?.session {
-            assertSession(session: session, started: sessionStartTime, status: SentrySessionStatus.crashed, duration: 5)
-        } else {
-            XCTFail("No session sent with event.")
-        }
+        let session = try XCTUnwrap(fixture.client.captureFatalEventWithSessionInvocations.last?.session)
+        assertSession(session: session, started: sessionStartTime, status: SentrySessionStatus.crashed, duration: 5)
     }
     
     private func assertNotificationNames(_ notificationNames: [NSNotification.Name]) {
         XCTAssertEqual(4, notificationNames.count)
         
         XCTAssertEqual([
-            SentryNSNotificationCenterWrapper.didBecomeActiveNotificationName,
+            CrossPlatformApplication.didBecomeActiveNotification,
             NSNotification.Name(rawValue: SentryHybridSdkDidBecomeActiveNotificationName),
-            SentryNSNotificationCenterWrapper.willResignActiveNotificationName,
-            SentryNSNotificationCenterWrapper.willTerminateNotificationName
+            CrossPlatformApplication.willResignActiveNotification,
+            CrossPlatformApplication.willTerminateNotification
         ], notificationNames)
+    }
+
+    private func postHybridSdkDidBecomeActiveNotification() {
+        // When the hybrid SDK posts this notification, the app should be in active state
+        #if os(iOS) || targetEnvironment(macCatalyst) || os(tvOS)
+        fixture._application.unsafeApplicationState = .active
+        #else
+        fixture._application.setIsActive(true)
+        #endif
+        fixture.notificationCenter
+            .post(
+                Notification(
+                    name: NSNotification.Name(rawValue: SentryHybridSdkDidBecomeActiveNotificationName),
+                    object: nil,
+                    userInfo: nil
+                )
+            )
     }
 }

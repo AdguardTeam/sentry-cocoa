@@ -5,7 +5,7 @@ import XCTest
 class SentryLogTests: XCTestCase {
     var oldDebug: Bool!
     var oldLevel: SentryLevel!
-    var oldOutput: SentryLogOutputProtocol!
+    var oldOutput: SentryLogOutput!
     var timeIntervalSince1970: TimeInterval = 0.0
 
     override func setUp() {

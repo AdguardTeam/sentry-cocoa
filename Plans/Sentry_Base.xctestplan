@@ -9,6 +9,7 @@
     }
   ],
   "defaultOptions" : {
+    "codeCoverage" : true,
     "environmentVariableEntries" : [
       {
         "key" : "TSAN_OPTIONS",
@@ -34,8 +35,8 @@
         "SentryCrashReportStore_Tests\/testDeleteAllReports",
         "SentryCrashReportStore_Tests\/testStoresLoadsMultipleReports",
         "SentryHttpTransportTests\/testFlush_WhenNoInternet_BlocksAndFinishes()",
-        "SentryNetworkTrackerIntegrationTests\/testGetCaptureFailedRequestsEnabled()",
-        "SentryNetworkTrackerIntegrationTests\/testGetRequest_CompareSentryTraceHeader()",
+        "SentryNetworkTrackerIntegrationTestServerTests",
+        "SentryNetworkTrackerIntegrationTestServerTests\/testGetRequest_SpanCreatedAndBaggageHeaderAdded()",
         "SentryOnDemandReplayTests\/testAddFrameIsThreadSafe()",
         "SentryProfilerSwiftTests\/testConcurrentSpansWithTimeout()",
         "SentryReachabilityTest\/testMultipleReachabilityObservers",
@@ -52,6 +53,13 @@
         "containerPath" : "container:Sentry.xcodeproj",
         "identifier" : "63AA76641EB8CB2F00D153DE",
         "name" : "SentryTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Sentry.xcodeproj",
+        "identifier" : "D4CBA2422DE06D0200581618",
+        "name" : "SentryTestUtilsTests"
       }
     },
     {

@@ -1,5 +1,5 @@
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 class SentrySystemEventBreadcrumbsTest: XCTestCase {
@@ -14,7 +14,7 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
         var currentDateProvider = TestCurrentDateProvider()
         let notificationCenterWrapper = TestNSNotificationCenterWrapper()
 
-        init() {
+        init() throws {
             options = Options()
             options.dsn = TestConstants.dsnAsString(username: "SentrySystemEventBreadcrumbsTest")
             options.releaseName = "SentrySessionTrackerIntegrationTests"
@@ -22,7 +22,11 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
             options.environment = "debug"
             SentryDependencyContainer.sharedInstance().dateProvider = currentDateProvider
 
-            fileManager = try! TestFileManager(options: options)
+            fileManager = try TestFileManager(
+                options: options,
+                dateProvider: currentDateProvider,
+                dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+            )
         }
 
         func getSut(currentDevice: UIDevice? = UIDevice.current) -> SentrySystemEventBreadcrumbs {
@@ -35,9 +39,6 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
             return systemEvents
         }
     }
-
-    private lazy var fixture = Fixture()
-    private var sut: SentrySystemEventBreadcrumbs!
     
     private class MyUIDevice: UIDevice {
         private var _batteryLevel: Float
@@ -59,6 +60,14 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
         override var orientation: UIDeviceOrientation {
             return _orientation
         }
+    }
+
+    private var fixture: Fixture!
+    private var sut: SentrySystemEventBreadcrumbs!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        fixture = try Fixture()
     }
 
     override func tearDown() {
@@ -115,8 +124,8 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
         
         sut = fixture.getSut(currentDevice: currentDevice)
         
-        NotificationCenter.default.post(Notification(name: UIDevice.batteryStateDidChangeNotification, object: currentDevice))
-        
+        fixture.notificationCenterWrapper.post(Notification(name: UIDevice.batteryStateDidChangeNotification, object: currentDevice))
+
         assertBatteryBreadcrumb(charging: false, level: 100)
     }
     
@@ -182,7 +191,7 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
         
         sut = fixture.getSut(currentDevice: currentDevice)
         
-        NotificationCenter.default.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
+        fixture.notificationCenterWrapper.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
         assertPositionOrientationBreadcrumb(position: "portrait")
     }
     
@@ -191,7 +200,7 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
         
         sut = fixture.getSut(currentDevice: currentDevice)
         
-        NotificationCenter.default.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
+        fixture.notificationCenterWrapper.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
         assertPositionOrientationBreadcrumb(position: "landscape")
     }
     
@@ -200,15 +209,15 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
         
         sut = fixture.getSut(currentDevice: currentDevice)
         
-        NotificationCenter.default.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
-        
+        fixture.notificationCenterWrapper.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
+
         XCTAssertEqual(0, fixture.delegate.addCrumbInvocations.count, "there are breadcrumbs")
     }
     
     func testOrientationBreadcrumbForSessionReplay() throws {
         let currentDevice = MyUIDevice()
         sut = fixture.getSut(currentDevice: currentDevice)
-        NotificationCenter.default.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
+        fixture.notificationCenterWrapper.post(Notification(name: UIDevice.orientationDidChangeNotification, object: currentDevice))
         
         guard let breadcrumb = fixture.delegate.addCrumbInvocations.first else {
             XCTFail("No orientation breadcrumb")
@@ -319,10 +328,37 @@ class SentrySystemEventBreadcrumbsTest: XCTestCase {
         }
     }
 
+    func testSignificantTimeChangeNotificationBreadcrumb() throws {
+        sut = fixture.getSut(currentDevice: nil)
+
+        fixture.notificationCenterWrapper.post(Notification(name: UIApplication.significantTimeChangeNotification, object: nil))
+
+        XCTAssertEqual(1, fixture.delegate.addCrumbInvocations.count)
+
+        let crumb = try XCTUnwrap(fixture.delegate.addCrumbInvocations.first)
+
+        XCTAssertEqual("device.event", crumb.category)
+        XCTAssertEqual("system", crumb.type)
+        XCTAssertEqual(SentryLevel.info, crumb.level)
+
+        let data = try XCTUnwrap(crumb.data, "no breadcrumb.data")
+        XCTAssertEqual("SIGNIFICANT_TIME_CHANGE", data["action"] as? String)
+    }
+
+    func testSignificantTimeChangeNotificationBreadcrumb_UnsubscribeOnStop() {
+        sut = fixture.getSut(currentDevice: nil)
+
+        sut.stop()
+
+        let didCallRemoveObserver = fixture.notificationCenterWrapper.removeObserverWithNameAndObjectInvocations.invocations.filter { $0.name == UIApplication.significantTimeChangeNotification }.count == 1
+
+        XCTAssertTrue(didCallRemoveObserver, "Stop didn't call remove observer for UIApplicationSignificantTimeChangeNotification")
+    }
+
     func testStopCallsSpecificRemoveObserverMethods() {
         sut = fixture.getSut(currentDevice: nil)
         sut.stop()
-        XCTAssertEqual(fixture.notificationCenterWrapper.removeObserverWithNameInvocations.count, 7)
+        XCTAssertEqual(fixture.notificationCenterWrapper.removeObserverWithNameAndObjectInvocations.count, 7)
     }
     
     private func postBatteryLevelNotification(uiDevice: UIDevice?) {

@@ -1,7 +1,6 @@
 #import "SentryByteCountFormatter.h"
 #import "SentryFileIOTracker.h"
 #import "SentryOptions.h"
-#import "SentrySDK.h"
 #import "SentrySpan.h"
 #import "SentrySpanOperation.h"
 #import "SentrySwizzle.h"
@@ -205,13 +204,14 @@
 
 - (void)assertTransactionForOperation:(NSString *)operation block:(void (^)(void))block
 {
-    SentryTracer *parentTransaction = [SentrySDK startTransactionWithName:@"Transaction"
-                                                                operation:@"Test"
-                                                              bindToScope:YES];
+    SentryTracer *parentTransaction
+        = (SentryTracer *)[SentrySDK startTransactionWithName:@"Transaction"
+                                                    operation:@"Test"
+                                                  bindToScope:YES];
 
     block();
 
-    SentrySpan *ioSpan = parentTransaction.children.firstObject;
+    SentrySpan *ioSpan = (SentrySpan *)parentTransaction.children.firstObject;
 
     XCTAssertEqual(parentTransaction.children.count, 1);
     XCTAssertEqual([ioSpan.data[@"file.size"] unsignedIntValue], someData.length);
