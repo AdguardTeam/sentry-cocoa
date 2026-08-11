@@ -25,6 +25,8 @@
 #import "SentryUseNSExceptionCallstackWrapper.h"
 #import "SentryUserFeedbackIntegration.h"
 
+#import "SentryCrashIntegration.h" // AG-57450
+
 #if TARGET_OS_OSX
 #    import "SentryCrashExceptionApplication.h"
 #endif // TARGET_OS_MAC

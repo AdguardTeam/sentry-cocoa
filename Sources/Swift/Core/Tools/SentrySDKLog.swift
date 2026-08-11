@@ -1,6 +1,7 @@
 import Foundation
 
-typealias SentryLogOutput = ((String) -> Void)
+// AG-57450
+public typealias SentryLogOutput = ((String) -> Void)
 
 /// A note on the thread safety:
 /// The methods configure and log don't use synchronization mechanisms, meaning they aren't strictly speaking thread-safe.
@@ -58,8 +59,9 @@ typealias SentryLogOutput = ((String) -> Void)
     }
  
     //ADGUARD: #if SENTRY_TEST || SENTRY_TEST_CI
-    @objc
-    static func setOutput(_ output: @escaping SentryLogOutput) {
+    // AG-57450
+    @objc(setOutput:)
+    public static func setOutput(_ output: @escaping SentryLogOutput) {
         logOutput = output
     }
     

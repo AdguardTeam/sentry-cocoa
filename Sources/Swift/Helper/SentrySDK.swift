@@ -66,7 +66,19 @@ import Foundation
     @objc public static func start(configureOptions: @escaping (Options) -> Void) {
         SentrySDKInternal.start(configureOptions: configureOptions)
     }
-    
+
+    // AG-57450
+    @objc public static func setLogOutput(_ output: @escaping SentryLogOutput)
+    {
+        SentrySDKInternal.setLogOutput(output)
+    }
+
+    // AG-57450
+    @objc public static func sendAllSentryCrashReports (completion: @escaping SentryCrashReportFilterCompletion)
+    {
+        SentrySDKInternal.sendAllSentryCrashReports(completion: completion)
+    }
+
     // MARK: - Event Capture
     
     /// Captures a manually created event and sends it to Sentry.
