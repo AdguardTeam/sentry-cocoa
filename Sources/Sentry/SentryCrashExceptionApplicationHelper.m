@@ -21,7 +21,8 @@
 
 + (void)_crashOnException:(NSException *)exception
 {
-    [SentrySDKInternal captureCrashOnException:exception];
+    // AG-57450: Do not attempt to submit the report immediately
+    //  [SentrySDKInternal captureCrashOnException:exception];
 #    if !(SENTRY_TEST || SENTRY_TEST_CI)
     abort();
 #    endif
