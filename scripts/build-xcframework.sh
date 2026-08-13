@@ -4,7 +4,6 @@ set -eou pipefail
 
 sdks=( macosx ) #ADGUARD: we build for macosx only
 
-
 rm -rf Carthage/
 mkdir Carthage
 

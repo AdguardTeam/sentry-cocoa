@@ -1,7 +1,7 @@
 #import "SentryOptions.h"
 #import "SentryError.h"
-#import "SentryOptions+HybridSDKs.h"
-#import "SentrySDK.h"
+#import "SentryOptionsInternal.h"
+#import "SentrySDKInternal.h"
 #import "SentrySpan.h"
 #import "SentryTests-Swift.h"
 #import <XCTest/XCTest.h>
@@ -15,7 +15,7 @@
 - (void)testEmptyDsn
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{} didFailWithError:&error];
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ } didFailWithError:&error];
 
     XCTAssertNil(options.parsedDsn);
     XCTAssertEqual(NO, options.debug);
@@ -27,7 +27,7 @@
 - (void)testInvalidDsnBoolean
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{ @"dsn" : @YES }
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ @"dsn" : @YES }
                                                 didFailWithError:&error];
 
     [self assertDsnNil:options andError:error];
@@ -43,7 +43,7 @@
 - (void)testInvalidDsn
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{ @"dsn" : @"https://sentry.io" }
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ @"dsn" : @"https://sentry.io" }
                                                 didFailWithError:&error];
     XCTAssertEqual(kSentryErrorInvalidDsnError, error.code);
     XCTAssertNil(options);
@@ -51,7 +51,7 @@
 
 - (void)testInvalidDsnWithNoErrorArgument
 {
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{ @"dsn" : @"https://sentry.io" }
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{ @"dsn" : @"https://sentry.io" }
                                                 didFailWithError:nil];
     XCTAssertNil(options);
 }
@@ -76,7 +76,7 @@
 
 - (void)testNoReleaseSetUsesDefault
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertEqualObjects(options.releaseName, [self buildDefaultReleaseName]);
 }
 
@@ -96,7 +96,7 @@
 
 - (void)testEnvironment
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertEqual(options.environment, kSentryDefaultEnvironment);
 
     options = [self getValidOptions:@{ @"environment" : @"xxx" }];
@@ -105,7 +105,7 @@
 
 - (void)testDist
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertNil(options.dist);
 
     options = [self getValidOptions:@{ @"dist" : @"hhh" }];
@@ -129,7 +129,7 @@
 - (void)testDebugWith:(NSObject *)debugValue expected:(BOOL)expectedDebugValue
 {
     NSError *error = nil;
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{
         @"dsn" : @"https://username:password@sentry.io/1",
         @"debug" : debugValue
     }
@@ -224,7 +224,7 @@
 
 - (void)testDefaultMaxBreadcrumbs
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertEqual([@100 unsignedIntValue], options.maxBreadcrumbs);
 }
@@ -254,7 +254,7 @@
 
 - (void)testDefaultMaxCacheItems
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertEqual([@30 unsignedIntValue], options.maxCacheItems);
 }
@@ -287,7 +287,7 @@
 
 - (void)testDefaultBeforeSend
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertNil(options.beforeSend);
 }
@@ -316,7 +316,7 @@
 
 - (void)testDefaultBeforeSendSpan
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertNil(options.beforeSendSpan);
 }
@@ -332,7 +332,7 @@
 
 - (void)testDefaultBeforeBreadcrumb
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertNil(options.beforeBreadcrumb);
 }
@@ -353,7 +353,7 @@
 
 - (void)testDefaultBeforeCaptureScreenshot
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertNil(options.beforeCaptureScreenshot);
 }
@@ -374,7 +374,7 @@
 
 - (void)testDefaultBeforeCaptureViewHierarchy
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertNil(options.beforeCaptureViewHierarchy);
 }
@@ -459,7 +459,7 @@
 
 - (void)testDefaultOnCrashedLastRun
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertNil(options.onCrashedLastRun);
 }
@@ -476,15 +476,21 @@
     NSArray<NSString *> *integrations = @[ @"integration1", @"integration2" ];
     SentryOptions *options = [self getValidOptions:@{ @"integrations" : integrations }];
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     [self assertArrayEquals:integrations actual:options.integrations];
+#pragma clang diagnostic pop
 }
 
 - (void)testDefaultIntegrations
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     XCTAssertTrue([[SentryOptions defaultIntegrations] isEqualToArray:options.integrations],
         @"Default integrations are not set correctly");
+#pragma clang diagnostic pop
 }
 
 #if SENTRY_HAS_UIKIT
@@ -545,7 +551,7 @@
 
 - (void)testSampleRateNotSet
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertEqual(@1, options.sampleRate);
 }
@@ -571,7 +577,7 @@
 
 - (void)testDefaultSessionTrackingIntervalMillis
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertEqual([@30000 unsignedIntValue], options.sessionTrackingIntervalMillis);
 }
@@ -595,7 +601,7 @@
 
 - (void)testNSNull_SetsDefaultValue
 {
-    SentryOptions *options = [[SentryOptions alloc] initWithDict:@{
+    SentryOptions *options = [SentryOptionsInternal initWithDict:@{
         @"urlSession" : [NSNull null],
         @"dsn" : [NSNull null],
         @"enabled" : [NSNull null],
@@ -671,8 +677,11 @@
     XCTAssertNil(options.beforeSend);
     XCTAssertNil(options.beforeBreadcrumb);
     XCTAssertNil(options.onCrashedLastRun);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     XCTAssertTrue([[SentryOptions defaultIntegrations] isEqualToArray:options.integrations],
         @"Default integrations are not set correctly");
+#pragma clang diagnostic pop
     XCTAssertEqual(@1, options.sampleRate);
     XCTAssertEqual(YES, options.enableAutoSessionTracking);
     XCTAssertEqual(YES, options.enableWatchdogTerminationTracking);
@@ -736,9 +745,9 @@
 #    pragma clang diagnostic push
 #    pragma clang diagnostic ignored "-Wdeprecated-declarations"
     XCTAssertEqual(NO, options.enableProfiling);
-#    pragma clang diagnostic pop
     XCTAssertNil(options.profilesSampleRate);
     XCTAssertNil(options.profilesSampler);
+#    pragma clang diagnostic pop
     XCTAssertTrue([options isContinuousProfilingEnabled]);
 #endif // SENTRY_TARGET_PROFILING_SUPPORTED
 
@@ -810,7 +819,7 @@
 
 - (void)testDefaultMaxAttachmentSize
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
 
     XCTAssertEqual(20 * 1024 * 1024, options.maxAttachmentSize);
 }
@@ -897,7 +906,7 @@
 - (void)testSessionReplaySettingsDefaults
 {
     if (@available(iOS 16.0, tvOS 16.0, *)) {
-        SentryOptions *options = [self getValidOptions:@{ @"sessionReplayOptions" : @ {} }];
+        SentryOptions *options = [self getValidOptions:@{ @"sessionReplayOptions" : @ { } }];
         XCTAssertEqual(options.sessionReplay.sessionSampleRate, 0);
         XCTAssertEqual(options.sessionReplay.onErrorSampleRate, 0);
     }
@@ -943,7 +952,7 @@
 
 - (void)testDefaultAppHangsTimeout
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertEqual(2, options.appHangTimeoutInterval);
 }
 
@@ -1041,7 +1050,7 @@
 
 - (void)testDefaultTracesSampleRate
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertEqual(options.tracesSampleRate.doubleValue, 0);
 }
 
@@ -1109,7 +1118,7 @@
 
 - (void)testDefaultTracesSampler
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertNil(options.tracesSampler);
 }
 
@@ -1155,6 +1164,8 @@
     [self testBooleanField:@"enableProfiling" defaultValue:NO];
 }
 
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wdeprecated-declarations"
 - (void)testProfilesSampleRate
 {
     SentryOptions *options = [self getValidOptions:@{ @"profilesSampleRate" : @0.1 }];
@@ -1164,7 +1175,7 @@
 
 - (void)testDefaultProfilesSampleRate
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertNil(options.profilesSampleRate);
 
     // This property now only refers to trace-based profiling, but renaming it would require a major
@@ -1333,7 +1344,7 @@
 
 - (void)testDefaultProfilesSampler
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertNil(options.profilesSampler);
     XCTAssertTrue([options isContinuousProfilingEnabled]);
 }
@@ -1344,6 +1355,7 @@
     XCTAssertNil(options.profilesSampler);
     XCTAssertTrue([options isContinuousProfilingEnabled]);
 }
+#    pragma clang diagnostic pop
 
 #endif // SENTRY_TARGET_PROFILING_SUPPORTED
 
@@ -1363,7 +1375,7 @@
 
 - (void)testAddInAppIncludes
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     [options addInAppInclude:@"App"];
 
     NSArray<NSString *> *expected = @[ @"App" ];
@@ -1383,7 +1395,7 @@
 
 - (void)testDefaultInAppIncludes
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertEqualObjects([self getDefaultInAppIncludes], options.inAppIncludes);
 }
 
@@ -1399,20 +1411,20 @@
 
 - (void)testAddInAppExcludes
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     [options addInAppExclude:@"App"];
     XCTAssertEqualObjects(@[ @"App" ], options.inAppExcludes);
 }
 
 - (void)testDefaultInAppExcludes
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertEqualObjects(@[], options.inAppExcludes);
 }
 
 - (void)testDefaultInitialScope
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     SentryScope *scope = [[SentryScope alloc] init];
     XCTAssertIdentical(scope, options.initialScope(scope));
 }
@@ -1426,11 +1438,14 @@
 }
 
 #if SENTRY_TARGET_PROFILING_SUPPORTED
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wdeprecated-declarations"
 - (void)testEnableAppLaunchProfilingDefaultValue
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertFalse(options.enableAppLaunchProfiling);
 }
+#    pragma clang diagnostic pop
 #endif // SENTRY_TARGET_PROFILING_SUPPORTED
 
 - (SentryOptions *)getValidOptions:(NSDictionary<NSString *, id> *)dict
@@ -1442,7 +1457,7 @@
 
     [options addEntriesFromDictionary:dict];
 
-    SentryOptions *sentryOptions = [[SentryOptions alloc] initWithDict:options
+    SentryOptions *sentryOptions = [SentryOptionsInternal initWithDict:options
                                                       didFailWithError:&error];
     XCTAssertNil(error);
     return sentryOptions;
@@ -1475,7 +1490,7 @@
 
 - (void)testInitialSwiftAsyncStacktraces
 {
-    SentryOptions *options = [self getValidOptions:@{}];
+    SentryOptions *options = [self getValidOptions:@{ }];
     XCTAssertFalse(options.swiftAsyncStacktraces);
 }
 
@@ -1515,6 +1530,36 @@
     XCTAssertEqualObjects(options3.spotlightUrl, @"http://localhost:8969/stream");
 }
 
+#if SENTRY_HAS_UIKIT
+- (void)testIsAppHangTrackingV2Disabled_WhenBothOptionsDisabled
+{
+    SentryOptions *options = [self
+        getValidOptions:@{ @"enableAppHangTrackingV2" : @NO, @"appHangTimeoutInterval" : @0 }];
+    XCTAssertTrue(options.isAppHangTrackingV2Disabled);
+}
+
+- (void)testIsAppHangTrackingV2Disabled_WhenOnlyEnableAppHangTrackingV2Disabled
+{
+    SentryOptions *options = [self
+        getValidOptions:@{ @"enableAppHangTrackingV2" : @NO, @"appHangTimeoutInterval" : @2.0 }];
+    XCTAssertTrue(options.isAppHangTrackingV2Disabled);
+}
+
+- (void)testIsAppHangTrackingV2Disabled_WhenOnlyAppHangTimeoutIntervalZero
+{
+    SentryOptions *options = [self
+        getValidOptions:@{ @"enableAppHangTrackingV2" : @YES, @"appHangTimeoutInterval" : @0 }];
+    XCTAssertTrue(options.isAppHangTrackingV2Disabled);
+}
+
+- (void)testIsAppHangTrackingV2Disabled_WhenBothOptionsEnabled
+{
+    SentryOptions *options = [self
+        getValidOptions:@{ @"enableAppHangTrackingV2" : @YES, @"appHangTimeoutInterval" : @2.0 }];
+    XCTAssertFalse(options.isAppHangTrackingV2Disabled);
+}
+#endif // SENTRY_HAS_UIKIT
+
 #pragma mark - Private
 
 - (void)assertArrayEquals:(NSArray<NSString *> *)expected actual:(NSArray<NSString *> *)actual
@@ -1535,7 +1580,7 @@
     XCTAssertEqual(!defaultValue, [self getProperty:property of:options]);
 
     // Default
-    options = [self getValidOptions:@{}];
+    options = [self getValidOptions:@{ }];
     XCTAssertEqual(defaultValue, [self getProperty:property of:options]);
 
     // Garbage

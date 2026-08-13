@@ -1,9 +1,10 @@
-@testable import Sentry
+@_spi(Private) @testable import Sentry
 import SentryTestUtils
 import XCTest
 
 class SentryNSURLRequestBuilderTests: XCTestCase {
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCreateEnvelopeRequestWithDsn() throws {
         let sut = getSut()
         
@@ -14,6 +15,7 @@ class SentryNSURLRequestBuilderTests: XCTestCase {
         XCTAssertNotNil(request)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCreateEnvelopeRequestWithUrl() throws {
         let sut = getSut()
         
@@ -56,6 +58,7 @@ class SentryNSURLRequestBuilderTests: XCTestCase {
         return try XCTUnwrap(URL(string: "sentry.io/test"))
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     private func givenEnvelope() -> SentryEnvelope {
         return SentryEnvelope(
             id: SentryId(),
@@ -69,7 +72,8 @@ class SentryNSURLRequestBuilderTests: XCTestCase {
             version: "8.0.0",
             integrations: [],
             features: [],
-            packages: []
+            packages: [],
+            settings: SentrySDKSettings(dict: [:])
         )
         let headerWithInvalidJSON = SentryEnvelopeHeader(
             id: nil,

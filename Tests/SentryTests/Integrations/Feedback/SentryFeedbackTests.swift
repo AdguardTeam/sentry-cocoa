@@ -1,6 +1,7 @@
 import Foundation
 #if os(iOS) && !SENTRY_NO_UIKIT
-@testable import Sentry
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 class SentryFeedbackTests: XCTestCase {
@@ -178,16 +179,151 @@ class SentryFeedbackTests: XCTestCase {
             func testCaseDescription() -> String {
                 "(config: (requiresName: \(input.config.requiresName), requiresEmail: \(input.config.requiresEmail), nameInput: \(input.config.nameInput == nil ? "nil" : "\"\(input.config.nameInput!)\""), emailInput: \(input.config.emailInput == nil ? "nil" : "\"\(input.config.emailInput!)\""), messageInput: \(input.config.messageInput == nil ? "nil" : "\"\(input.config.messageInput!)\""), includeScreenshot: \(input.config.includeScreenshot)), expectedSubmitButtonAccessibilityHint: \(input.expectedSubmitButtonAccessibilityHint)"
             }
-            SentryLog.withoutLogs {
-                switch viewModel.validate() {
-                case .success(let hint):
-                    XCTAssert(input.shouldValidate)
-                    XCTAssertEqual(hint, input.expectedSubmitButtonAccessibilityHint, testCaseDescription())
-                case .failure(let error):
-                    XCTAssertFalse(input.shouldValidate, error.description + "; " + testCaseDescription())
-                }
+
+            switch viewModel.validate() {
+            case .success(let hint):
+                XCTAssert(input.shouldValidate)
+                XCTAssertEqual(hint, input.expectedSubmitButtonAccessibilityHint, testCaseDescription())
+            case .failure(let error):
+                XCTAssertFalse(input.shouldValidate, error.description + "; " + testCaseDescription())
             }
+
         }
+    }
+    
+    func testFeedbackNotSubjectToSampling() throws {
+        let options = Options()
+        options.dsn = TestConstants.dsnAsString(username: "SentryFeedbackTests")
+        options.sampleRate = 0.0 // Sample rate that would normally filter out all events
+
+        let transport = TestTransport()
+        let transportAdapter = TestTransportAdapter(transports: [transport], options: options)
+
+        let client = SentryClient(
+            options: options,
+            transportAdapter: transportAdapter,
+            fileManager: try XCTUnwrap(SentryFileManager(
+                options: options,
+                dateProvider: TestCurrentDateProvider(),
+                dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+            )),
+            deleteOldEnvelopeItems: false,
+            threadInspector: TestThreadInspector.instance,
+            debugImageProvider: TestDebugImageProvider(),
+            random: TestRandom(value: 1.0),
+            locale: Locale(identifier: "en_US"),
+            timezone: try XCTUnwrap(TimeZone(identifier: "Europe/Vienna"))
+        )
+        let hub = TestHub(client: client, andScope: nil)
+
+        SentrySDKInternal.setCurrentHub(hub)
+        
+        let feedback = SentryFeedback(
+            message: "Test feedback message",
+            name: "Test User",
+            email: "test@example.com",
+            source: .widget
+        )
+
+        SentrySDK.capture(feedback: feedback)
+        
+        // Verify that the feedback was captured and sent despite the 0.0 sample rate
+        let lastSentEventArguments = try XCTUnwrap(transportAdapter.sendEventWithTraceStateInvocations.last)
+        let capturedFeedback = try XCTUnwrap(lastSentEventArguments.event)
+
+        XCTAssertEqual(capturedFeedback.type, SentryEnvelopeItemTypes.feedback)
+    }
+    
+    func testFeedbackNotSubjectToBeforeSendFiltering() throws {
+        let options = Options()
+        options.dsn = TestConstants.dsnAsString(username: "SentryFeedbackTests")
+        options.beforeSend = { _ in return nil } // beforeSend that filters out all events
+
+        let transport = TestTransport()
+        let transportAdapter = TestTransportAdapter(transports: [transport], options: options)
+
+        let client = SentryClient(
+            options: options,
+            transportAdapter: transportAdapter,
+            fileManager: try XCTUnwrap(SentryFileManager(
+                options: options,
+                dateProvider: TestCurrentDateProvider(),
+                dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+            )),
+            deleteOldEnvelopeItems: false,
+            threadInspector: TestThreadInspector.instance,
+            debugImageProvider: TestDebugImageProvider(),
+            random: TestRandom(value: 1.0),
+            locale: Locale(identifier: "en_US"),
+            timezone: try XCTUnwrap(TimeZone(identifier: "Europe/Vienna"))
+        )
+        let hub = TestHub(client: client, andScope: nil)
+        SentrySDKInternal.setCurrentHub(hub)
+        
+        let feedback = SentryFeedback(
+            message: "Test feedback message",
+            name: "Test User", 
+            email: "test@example.com",
+            source: .widget
+        )
+
+        SentrySDK.capture(feedback: feedback)
+        
+        // Verify that the feedback was captured and sent despite beforeSend returning nil
+        let lastSentEventArguments = try XCTUnwrap(transportAdapter.sendEventWithTraceStateInvocations.last)
+        let capturedFeedback = try XCTUnwrap(lastSentEventArguments.event)
+
+        XCTAssertEqual(capturedFeedback.type, SentryEnvelopeItemTypes.feedback)
+    }
+    
+    func testFeedbackWithSamplingAndBeforeSendFilteringCombined() throws {
+        let options = Options()
+        options.dsn = TestConstants.dsnAsString(username: "SentryFeedbackTests")
+        options.sampleRate = 0.5 // Partial sampling
+        options.beforeSend = { _ in return nil } // beforeSend that filters out all events
+
+        let transport = TestTransport()
+        let transportAdapter = TestTransportAdapter(transports: [transport], options: options)
+
+        let client = SentryClient(
+            options: options,
+            transportAdapter: transportAdapter,
+            fileManager: try XCTUnwrap(SentryFileManager(
+                options: options,
+                dateProvider: TestCurrentDateProvider(),
+                dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+            )),
+            deleteOldEnvelopeItems: false,
+            threadInspector: TestThreadInspector.instance,
+            debugImageProvider: TestDebugImageProvider(),
+            random: TestRandom(value: 1.0),
+            locale: Locale(identifier: "en_US"),
+            timezone: try XCTUnwrap(TimeZone(identifier: "Europe/Vienna"))
+        )
+        let hub = TestHub(client: client, andScope: nil)
+        SentrySDKInternal.setCurrentHub(hub)
+
+        struct UserInfo {
+            var email: String?
+        }
+        
+        let userInfo = UserInfo(email: nil)
+        let emailString = String(userInfo.email ?? "newanonymous@example.com")
+        
+        let feedback = SentryFeedback(
+            message: "messageString",
+            name: "nameString",
+            email: emailString,
+            source: .widget
+        )
+
+        SentrySDK.capture(feedback: feedback)
+        
+        // Verify that the feedback was captured and sent despite both sampling and beforeSend filtering
+        let lastSentEventArguments = try XCTUnwrap(transportAdapter.sendEventWithTraceStateInvocations.last)
+        let capturedFeedback = try XCTUnwrap(lastSentEventArguments.event)
+
+        XCTAssertEqual(capturedFeedback.type, SentryEnvelopeItemTypes.feedback)
     }
 }
 

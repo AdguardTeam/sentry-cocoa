@@ -1,4 +1,5 @@
-@testable import Sentry
+@_spi(Private) @testable import Sentry
+@_spi(Private) @testable import SentryTestUtils
 import XCTest
 
 /**
@@ -20,10 +21,13 @@ class SentryDebugImageProviderTests: XCTestCase {
             imageProvider.imageCount = images.count
             imageProvider.binaryImage = images
             
-            cache.start()
+            cache.start(false)
             for image in images {
-                var i = image
-                cache.binaryImageAdded(&i)
+                cache.binaryImageAdded(imageName: image.name,
+                                       vmAddress: image.vmAddress,
+                                       address: image.address,
+                                       size: image.size,
+                                       uuid: image.uuid)
             }
             
             return SentryDebugImageProvider(binaryImageProvider: imageProvider, binaryImageCache: cache)

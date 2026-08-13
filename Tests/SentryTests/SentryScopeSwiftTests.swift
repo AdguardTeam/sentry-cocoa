@@ -1,3 +1,4 @@
+@_spi(Private) import Sentry
 import SentryTestUtils
 import XCTest
 
@@ -841,6 +842,26 @@ class SentryScopeSwiftTests: XCTestCase {
         let expected: NSDictionary = ["A": ["AA": 1]]
         XCTAssertEqual(observer1.context as? NSDictionary, expected)
         XCTAssertEqual(observer2.context as? NSDictionary, expected)
+    }
+
+    func testScopeObserver_setPropagationContext_UpdatesTraceContext() throws {
+        // -- Arrange --
+        let sut = Scope()
+        let observer = fixture.observer
+        sut.add(observer)
+        
+        let traceId = SentryId(uuidString: "12345678123456781234567812345678")
+        let spanId = SpanId(value: "1234567812345678")
+        let propagationContext = SentryPropagationContext(trace: traceId, spanId: spanId)
+        
+        // -- Act --
+        sut.propagationContext = propagationContext
+        
+        // -- Assert -- 
+        let traceContext = try XCTUnwrap(observer.traceContext)
+        XCTAssertEqual(2, traceContext.count)
+        XCTAssertEqual(traceId.sentryIdString, traceContext["trace_id"] as? String)
+        XCTAssertEqual(spanId.sentrySpanIdString, traceContext["span_id"] as? String)
     }
 
     private class TestScopeObserver: NSObject, SentryScopeObserver {

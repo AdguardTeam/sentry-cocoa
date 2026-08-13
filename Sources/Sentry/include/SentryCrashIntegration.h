@@ -1,7 +1,5 @@
 #import "SentryBaseIntegration.h"
-#import "SentrySwift.h"
 #import "SentryCrashReportFilter.h"
-#import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -11,7 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 static NSString *const SentryDeviceContextFreeMemoryKey = @"free_memory";
 static NSString *const SentryDeviceContextAppMemoryKey = @"app_memory";
 
-@interface SentryCrashIntegration : SentryBaseIntegration <SentryIntegrationProtocol>
+@interface SentryCrashIntegration : SentryBaseIntegration
 
 /**
  * Needed for testing.

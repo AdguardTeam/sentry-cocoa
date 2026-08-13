@@ -1,7 +1,7 @@
 // swiftlint:disable file_length
 
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 class SentryFileManagerTests: XCTestCase {
@@ -19,17 +19,14 @@ class SentryFileManagerTests: XCTestCase {
         let session = SentrySession(releaseName: "1.0.0", distinctId: "some-id")
         let sessionEnvelope: SentryEnvelope
         
+        var envelopeItemsDeleted = Invocations<SentryDataCategory>()
+        
         let sessionUpdate: SentrySession
         let sessionUpdateEnvelope: SentryEnvelope
         
         let expectedSessionUpdate: SentrySession
         
-        // swiftlint:disable weak_delegate
-        // Swiftlint automatically changes this to a weak reference,
-        // but we need a strong reference to make the test work.
-        var delegate: TestFileManagerDelegate!
-        // swiftlint:enable weak_delegate
-        
+        @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
         init() throws {
             currentDateProvider = TestCurrentDateProvider()
             dispatchQueueWrapper = TestSentryDispatchQueueWrapper()
@@ -37,8 +34,8 @@ class SentryFileManagerTests: XCTestCase {
             eventIds = (0...(maxCacheItems + 10)).map { _ in SentryId() }
             
             options = Options()
-            options.dsn = TestConstants.dsnAsString(username: "SentryFileManagerTests")
-            
+            options.dsn = TestConstants.dsnForTestCase(type: SentryFileManagerTests.self)
+
             sessionEnvelope = SentryEnvelope(session: session)
             
             let sessionCopy = try XCTUnwrap(session.copy() as? SentrySession)
@@ -55,24 +52,34 @@ class SentryFileManagerTests: XCTestCase {
             expectedSessionUpdate = SentrySession(jsonObject: sessionUpdateCopy.serialize())!
             // We can only set the init flag after serialize, because the duration is not set if the init flag is set
             expectedSessionUpdate.setFlagInit()
-            
-            delegate = TestFileManagerDelegate()
         }
         
         func getSut() -> SentryFileManager {
-            let sut = try! SentryFileManager(options: options, dispatchQueueWrapper: dispatchQueueWrapper)
-            sut.setDelegate(delegate)
+            let sut = try! SentryFileManager(
+                options: options,
+                dateProvider: currentDateProvider,
+                dispatchQueueWrapper: dispatchQueueWrapper
+            )
+            sut.setEnvelopeDeletedCallback { [weak self] _, category in
+                self?.envelopeItemsDeleted.record(category)
+            }
             return sut
         }
         
         func getSut(maxCacheItems: UInt) -> SentryFileManager {
             options.maxCacheItems = maxCacheItems
-            let sut = try! SentryFileManager(options: options, dispatchQueueWrapper: dispatchQueueWrapper)
-            sut.setDelegate(delegate)
+            let sut = try! SentryFileManager(
+                options: options,
+                dateProvider: currentDateProvider,
+                dispatchQueueWrapper: dispatchQueueWrapper
+            )
+            sut.setEnvelopeDeletedCallback { [weak self] _, category in
+                self?.envelopeItemsDeleted.record(category)
+            }
             return sut
         }
 
-        func getValidPath() -> String {
+        func getValidDirectoryPath() -> String {
             URL(fileURLWithPath: NSTemporaryDirectory())
                 .appendingPathComponent("SentryTest")
                 .path
@@ -97,6 +104,7 @@ class SentryFileManagerTests: XCTestCase {
     private var fixture: Fixture!
     private var sut: SentryFileManager!
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     override func setUpWithError() throws {
         try super.setUpWithError()
         fixture = try Fixture()
@@ -119,14 +127,23 @@ class SentryFileManagerTests: XCTestCase {
         sut.deleteAbnormalSession()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testInitDoesNotOverrideDirectories() {
         sut.store(TestConstants.envelope)
         sut.storeCurrentSession(SentrySession(releaseName: "1.0.0", distinctId: "some-id"))
         sut.storeTimestampLast(inForeground: Date())
         
-        _ = try! SentryFileManager(options: fixture.options, dispatchQueueWrapper: TestSentryDispatchQueueWrapper())
-        let fileManager = try! SentryFileManager(options: fixture.options, dispatchQueueWrapper: TestSentryDispatchQueueWrapper())
-        
+        _ = try! SentryFileManager(
+            options: fixture.options,
+            dateProvider: fixture.currentDateProvider,
+            dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+        )
+        let fileManager = try! SentryFileManager(
+            options: fixture.options,
+            dateProvider: fixture.currentDateProvider,
+            dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+        )
+
         XCTAssertEqual(1, fileManager.getAllEnvelopes().count)
         XCTAssertNotNil(fileManager.readCurrentSession())
         XCTAssertNotNil(fileManager.readTimestampLastInForeground())
@@ -135,8 +152,12 @@ class SentryFileManagerTests: XCTestCase {
     func testInitDeletesEventsFolder() {
         storeEvent()
         
-        _ = try! SentryFileManager(options: fixture.options, dispatchQueueWrapper: TestSentryDispatchQueueWrapper())
-        
+        _ = try! SentryFileManager(
+            options: fixture.options,
+            dateProvider: fixture.currentDateProvider,
+            dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+        )
+
         assertEventFolderDoesntExist()
     }
     
@@ -144,21 +165,22 @@ class SentryFileManagerTests: XCTestCase {
         assertEventFolderDoesntExist()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testStoreEnvelope() throws {
         let envelope = TestConstants.envelope
         sut.store(envelope)
         
-        let expectedData = try XCTUnwrap(SentrySerialization.data(with: envelope))
+        let expectedData = try XCTUnwrap(SentrySerializationSwift.data(with: envelope))
         
         let envelopes = sut.getAllEnvelopes()
         XCTAssertEqual(1, envelopes.count)
         
         let actualData = try XCTUnwrap(envelopes.first).contents
-        XCTAssertEqual(expectedData, actualData as Data)
+        try compareEnvelopes(expectedData, actualData as Data, message: "Envelopes are not equal")
     }
     
     func testStoreInvalidEnvelope_ReturnsNil() {
-        let sdkInfoWithInvalidJSON = SentrySdkInfo(name: SentryInvalidJSONString() as String, version: "8.0.0", integrations: [], features: [], packages: [])
+        let sdkInfoWithInvalidJSON = SentrySdkInfo(name: SentryInvalidJSONString() as String, version: "8.0.0", integrations: [], features: [], packages: [], settings: SentrySDKSettings(dict: [:]))
         let headerWithInvalidJSON = SentryEnvelopeHeader(id: nil, sdkInfo: sdkInfoWithInvalidJSON, traceContext: nil)
         
         let envelope = SentryEnvelope(header: headerWithInvalidJSON, items: [])
@@ -166,6 +188,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertNil(sut.store(envelope))
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDeleteOldEnvelopes() throws {
         try givenOldEnvelopes()
         
@@ -177,12 +200,12 @@ class SentryFileManagerTests: XCTestCase {
     
     func testDeleteOldEnvelopes_LogsIgnoreDSStoreFiles() throws {
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
         
         let dsStoreFile = "\(sut.basePath)/.DS_Store"
         
-        let result = FileManager.default.createFile(atPath: dsStoreFile, contents: "some data".data(using: .utf8))
+        let result = FileManager.default.createFile(atPath: dsStoreFile, contents: Data("some data".utf8))
         XCTAssertEqual(result, true)
         
         sut.deleteOldEnvelopeItems()
@@ -198,14 +221,14 @@ class SentryFileManagerTests: XCTestCase {
     
     func testDeleteOldEnvelopes_LogsDebugForTextFiles() throws {
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
         
         let sut = fixture.getSut()
         
         let textFilePath = "\(sut.basePath)/something.txt"
         
-        let result = FileManager.default.createFile(atPath: textFilePath, contents: "some data".data(using: .utf8))
+        let result = FileManager.default.createFile(atPath: textFilePath, contents: Data("some data".utf8))
         XCTAssertEqual(result, true)
         
         sut.deleteOldEnvelopeItems()
@@ -221,8 +244,8 @@ class SentryFileManagerTests: XCTestCase {
     
     func testGetEnvelopesPath_ForNonExistentPath_LogsWarning() throws {
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
         
         let sut = fixture.getSut()
         
@@ -238,6 +261,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(logMessages.count, 1)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDeleteOldEnvelopes_WithEmptyDSN() throws {
         fixture.options.dsn = nil
         sut = fixture.getSut()
@@ -250,6 +274,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(sut.getAllEnvelopes().count, 0)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDontDeleteYoungEnvelopes() throws {
         let envelope = TestConstants.envelope
         let path = try XCTUnwrap(sut.store(envelope))
@@ -265,6 +290,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(sut.getAllEnvelopes().count, 1)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDontDeleteYoungEnvelopesFromOldEnvelopesFolder() throws {
         let envelope = TestConstants.envelope
         sut.store(envelope)
@@ -280,6 +306,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(sut.getAllEnvelopes().count, 1)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testFileManagerDeallocated_OldEnvelopesNotDeleted() throws {
         try givenOldEnvelopes()
         
@@ -302,11 +329,12 @@ class SentryFileManagerTests: XCTestCase {
     
     func testDeleteFileNotExists() {
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
+        SentrySDKLog.setLogOutput(logOutput)
         sut.removeFile(atPath: "x")
         XCTAssertFalse(logOutput.loggedMessages.contains(where: { $0.contains("[error]") }))
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDefaultMaxEnvelopes() {
         for _ in 0...(fixture.maxCacheItems + 1) {
             sut.store(TestConstants.envelope)
@@ -316,6 +344,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(fixture.maxCacheItems, events.count)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDefaultMaxEnvelopes_CallsEnvelopeItemDeleted() {
         let event = Event()
         let envelope = SentryEnvelope(id: event.eventId, items: [
@@ -328,11 +357,12 @@ class SentryFileManagerTests: XCTestCase {
             sut.store(TestConstants.envelope)
         }
         
-        XCTAssertEqual(4, fixture.delegate.envelopeItemsDeleted.count)
+        XCTAssertEqual(4, fixture.envelopeItemsDeleted.count)
         let expected: [SentryDataCategory] = [.error, .attachment, .session, .error]
-        XCTAssertEqual(expected, fixture.delegate.envelopeItemsDeleted.invocations)
+        XCTAssertEqual(expected, fixture.envelopeItemsDeleted.invocations)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDefaultMaxEnvelopesConcurrent() {
         let maxCacheItems = 1
         let sut = fixture.getSut(maxCacheItems: UInt(maxCacheItems))
@@ -358,6 +388,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(maxCacheItems, events.count)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMaxEnvelopesSet() {
         let maxCacheItems: UInt = 15
         sut = fixture.getSut(maxCacheItems: maxCacheItems)
@@ -368,6 +399,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(maxCacheItems, UInt(events.count))
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMigrateSessionInit_SessionUpdateIsLast() throws {
         sut.store(fixture.sessionEnvelope)
         // just some other session
@@ -381,6 +413,7 @@ class SentryFileManagerTests: XCTestCase {
         assertSessionEnvelopesStored(count: 2)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMigrateSessionInit_SessionUpdateIsSecond() throws {
         sut.store(fixture.sessionEnvelope)
         sut.store(fixture.sessionUpdateEnvelope)
@@ -392,6 +425,7 @@ class SentryFileManagerTests: XCTestCase {
         assertSessionEnvelopesStored(count: 1)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMigrateSessionInit_IsInMiddle() throws {
         sut.store(fixture.sessionEnvelope)
         for _ in 0...10 {
@@ -406,6 +440,7 @@ class SentryFileManagerTests: XCTestCase {
         assertSessionEnvelopesStored(count: 1)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMigrateSessionInit_MovesInitFlagOnlyToFirstSessionUpdate() throws {
         sut.store(fixture.sessionEnvelope)
         for _ in 0...10 {
@@ -424,6 +459,7 @@ class SentryFileManagerTests: XCTestCase {
         assertSessionEnvelopesStored(count: 3)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMigrateSessionInit_NoOtherSessionUpdate() {
         sut.store(fixture.sessionEnvelope)
         sut.store(fixture.sessionUpdateEnvelope)
@@ -434,6 +470,7 @@ class SentryFileManagerTests: XCTestCase {
         assertSessionEnvelopesStored(count: 0)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMigrateSessionInit_FailToLoadEnvelope() throws {
         sut.store(fixture.sessionEnvelope)
         
@@ -452,6 +489,7 @@ class SentryFileManagerTests: XCTestCase {
         try assertSessionInitMoved(sut.getAllEnvelopes().last!)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testMigrateSessionInit_DoesNotCallEnvelopeItemDeleted() {
         sut.store(fixture.sessionEnvelope)
         sut.store(fixture.sessionUpdateEnvelope)
@@ -459,9 +497,10 @@ class SentryFileManagerTests: XCTestCase {
             sut.store(TestConstants.envelope)
         }
         
-        XCTAssertEqual(0, fixture.delegate.envelopeItemsDeleted.count)
+        XCTAssertEqual(0, fixture.envelopeItemsDeleted.count)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testGetAllEnvelopesAreSortedByDateAscending() {
         givenMaximumEnvelopes()
         
@@ -472,16 +511,17 @@ class SentryFileManagerTests: XCTestCase {
         
         XCTAssertEqual(fixture.maxCacheItems, envelopes.count)
         for i in 0..<fixture.maxCacheItems {
-            let envelope = SentrySerialization.envelope(with: envelopes[i].contents)
+            let envelope = SentrySerializationSwift.envelope(with: envelopes[i].contents)
             let actualEventId = envelope?.header.eventId
             XCTAssertEqual(expectedEventIds[i], actualEventId)
         }
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testGetOldestEnvelope() {
         givenMaximumEnvelopes()
         
-        let actualEnvelope = SentrySerialization.envelope(with: sut.getOldestEnvelope()?.contents ?? Data())
+        let actualEnvelope = SentrySerializationSwift.envelope(with: sut.getOldestEnvelope()?.contents ?? Data())
         
         XCTAssertEqual(try XCTUnwrap(fixture.eventIds.element(at: 11)), actualEnvelope?.header.eventId)
     }
@@ -493,7 +533,7 @@ class SentryFileManagerTests: XCTestCase {
     func testGetOldestEnvelope_WithGarbageInEnvelopesFolder() {
         givenGarbageInEnvelopesFolder()
         
-        let actualEnvelope = SentrySerialization.envelope(with: sut.getOldestEnvelope()?.contents ?? Data())
+        let actualEnvelope = SentrySerializationSwift.envelope(with: sut.getOldestEnvelope()?.contents ?? Data())
         XCTAssertNil(actualEnvelope)
     }
     
@@ -561,7 +601,7 @@ class SentryFileManagerTests: XCTestCase {
         sut.deleteAbnormalSession()
     }
     
-    func testReadAbnormalSession_NoSessionStored () throws {
+    func testReadAbnormalSession_NoSessionStored() throws {
         XCTAssertNil(sut.readAbnormalSession())
     }
     
@@ -613,6 +653,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertNil(actualTimestamp)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testGetAllStoredEventsAndEnvelopes() {
         sut.store(TestConstants.envelope)
         sut.store(TestConstants.envelope)
@@ -620,6 +661,7 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(2, sut.getAllEnvelopes().count)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDeleteAllFolders() {
         storeEvent()
         sut.store(TestConstants.envelope)
@@ -632,6 +674,7 @@ class SentryFileManagerTests: XCTestCase {
         assertEventFolderDoesntExist()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testDeleteAllStoredEnvelopes() {
         sut.store(TestConstants.envelope)
         
@@ -642,8 +685,8 @@ class SentryFileManagerTests: XCTestCase {
     
     func testGetAllEnvelopesWhenNoEnvelopesPath_LogsInfoMessage() {
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
         
         sut.deleteAllFolders()
         sut.getAllEnvelopes()
@@ -785,8 +828,8 @@ class SentryFileManagerTests: XCTestCase {
         let fileManager = FileManager.default
         let appHangEventFilePath = try XCTUnwrap(Dynamic(sut).appHangEventFilePath.asString)
         
-        fileManager.createFile(atPath: appHangEventFilePath, contents: "garbage".data(using: .utf8)!, attributes: nil)
-        
+        fileManager.createFile(atPath: appHangEventFilePath, contents: Data("garbage".utf8), attributes: nil)
+
         // Act
         XCTAssertNil(sut.readAppHangEvent())
     }
@@ -822,8 +865,8 @@ class SentryFileManagerTests: XCTestCase {
         let fileManager = FileManager.default
         let appHangEventFilePath = try XCTUnwrap(Dynamic(sut).appHangEventFilePath.asString)
         
-        fileManager.createFile(atPath: appHangEventFilePath, contents: "garbage".data(using: .utf8)!, attributes: nil)
-        
+        fileManager.createFile(atPath: appHangEventFilePath, contents: Data("garbage".utf8), attributes: nil)
+
         // Act && Assert
         XCTAssertTrue(sut.appHangEventExists())
     }
@@ -849,8 +892,16 @@ class SentryFileManagerTests: XCTestCase {
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
     
     func testReadPreviousBreadcrumbs() throws {
-        let observer = SentryWatchdogTerminationScopeObserver(maxBreadcrumbs: 2, fileManager: sut)
-        
+        let breadcrumbProcessor = SentryWatchdogTerminationBreadcrumbProcessor(maxBreadcrumbs: 2, fileManager: sut)
+        let attributesProcessor = try SentryWatchdogTerminationAttributesProcessor(
+            withDispatchQueueWrapper: SentryDispatchQueueWrapper(),
+            scopePersistentStore: XCTUnwrap(SentryScopePersistentStore(fileManager: sut))
+        )
+        let observer = SentryWatchdogTerminationScopeObserver(
+            breadcrumbProcessor: breadcrumbProcessor,
+            attributesProcessor: attributesProcessor
+        )
+
         for count in 0..<3 {
             let crumb = TestData.crumb
             crumb.message = "\(count)"
@@ -871,8 +922,16 @@ class SentryFileManagerTests: XCTestCase {
     }
     
     func testReadPreviousBreadcrumbsCorrectOrderWhenFileTwoHasMoreCrumbs() throws {
-        let observer = SentryWatchdogTerminationScopeObserver(maxBreadcrumbs: 2, fileManager: sut)
-        
+        let breadcrumbProcessor = SentryWatchdogTerminationBreadcrumbProcessor(maxBreadcrumbs: 2, fileManager: sut)
+        let attributesProcessor = try SentryWatchdogTerminationAttributesProcessor(
+            withDispatchQueueWrapper: TestSentryDispatchQueueWrapper(),
+            scopePersistentStore: XCTUnwrap(SentryScopePersistentStore(fileManager: sut))
+        )
+        let observer = SentryWatchdogTerminationScopeObserver(
+            breadcrumbProcessor: breadcrumbProcessor,
+            attributesProcessor: attributesProcessor
+        )
+
         for count in 0..<5 {
             let crumb = TestData.crumb
             crumb.message = "\(count)"
@@ -893,7 +952,7 @@ class SentryFileManagerTests: XCTestCase {
     }
     
 #endif // os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
-    
+
     func testReadGarbageTimezoneOffset() throws {
         try "garbage".write(to: URL(fileURLWithPath: sut.timezoneOffsetFilePath), atomically: true, encoding: .utf8)
         XCTAssertNil(sut.readTimezoneOffset())
@@ -1028,10 +1087,10 @@ class SentryFileManagerTests: XCTestCase {
     func testCreateDirectoryIfNotExists_successful_shouldNotLogError() throws {
         // -- Arrange -
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
 
-        let path = fixture.getValidPath()
+        let path = fixture.getValidDirectoryPath()
         var error: NSError?
         // -- Act --
         let result = createDirectoryIfNotExists(path, &error)
@@ -1043,8 +1102,8 @@ class SentryFileManagerTests: XCTestCase {
     func testCreateDirectoryIfNotExists_pathTooLogError_shouldLogError() throws {
         // -- Arrange -
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
 
         let path = fixture.getTooLongPath()
         var error: NSError?
@@ -1060,8 +1119,8 @@ class SentryFileManagerTests: XCTestCase {
     func testCreateDirectoryIfNotExists_otherError_shouldNotLogError() throws {
         // -- Arrange -
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
 
         let path = fixture.getInvalidPath()
         var error: NSError?
@@ -1072,6 +1131,53 @@ class SentryFileManagerTests: XCTestCase {
         XCTAssertEqual(error?.domain, SentryErrorDomain)
         XCTAssertEqual(error?.code, 108)
         XCTAssertEqual(logOutput.loggedMessages.count, 0)
+    }
+
+    func testReadDataFromPath_whenFileExistsAtPath_shouldReadData() throws {
+        // -- Arrange --
+        let dirUrl = URL(fileURLWithPath: fixture.getValidDirectoryPath())
+        let fileUrl = dirUrl.appendingPathComponent("test.file")
+        let data = Data("<TEST DATA>".utf8)
+
+        let fm = FileManager.default
+        try fm.createDirectory(at: dirUrl, withIntermediateDirectories: true)
+        try data.write(to: fileUrl)
+
+        // -- Act --
+        let readData = try sut.readData(fromPath: fileUrl.path)
+
+        // -- Assert --
+        XCTAssertEqual(readData, data)
+    }
+
+    func testReadDataFromPath_whenFileExistsNotAtPath_shouldReturnNil() throws {
+        // -- Arrange --
+        let path = fixture.getInvalidPath()
+
+        // -- Act & Assert --
+        try XCTAssertThrowsError(sut.readData(fromPath: path))
+    }
+
+    func testWriteData_whenSentryPathDirectoryNotExists_shouldCreateDirectory() throws {
+        // -- Arrange --
+        let path = sut.sentryPath.appending("/test.file")
+        let data = Data("<TEST DATA>".utf8)
+
+        let logOutput = TestLogOutput()
+        SentrySDKLog.setLogOutput(logOutput)
+
+        // Check pre-conditions
+        let fm = FileManager.default
+        if fm.fileExists(atPath: sut.sentryPath) {
+            try fm.removeItem(atPath: sut.sentryPath)
+        }
+        XCTAssertFalse(fm.fileExists(atPath: sut.sentryPath))
+
+        // -- Act --
+        sut.write(data, toPath: path)
+
+        // -- Assert --
+        XCTAssertTrue(fm.fileExists(atPath: path))
     }
 }
 
@@ -1090,7 +1196,7 @@ extension SentryFileManagerTests {
         XCTAssertFalse(appLaunchProfileConfigFileExists())
     }
     
-    func testAppLaunchProfileConfiguration() throws {
+    func testsentry_appLaunchProfileConfiguration() throws {
         // -- Assert --
         let expectedTracesSampleRate = 0.12
         let expectedTracesSampleRand = 0.55
@@ -1104,7 +1210,7 @@ extension SentryFileManagerTests {
             profilesSampleRate: expectedProfilesSampleRate,
             profilesSampleRand: expectedProfilesSampleRand
         )
-        let config = appLaunchProfileConfiguration()
+        let config = sentry_persistedLaunchProfileConfigurationOptions()
 
         // -- Assert --
         let actualTracesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRate]).doubleValue
@@ -1118,9 +1224,9 @@ extension SentryFileManagerTests {
     }
     
     // if a file isn't present when we expect it to be, like if there was an issue when we went to write it to disk
-    func testAppLaunchProfileConfiguration_noConfigurationExists() throws {
+    func testsentry_appLaunchProfileConfiguration_noConfigurationExists() throws {
         try ensureAppLaunchProfileConfig(exists: false)
-        XCTAssertNil(appLaunchProfileConfiguration())
+        XCTAssertNil(sentry_persistedLaunchProfileConfigurationOptions())
     }
     
     func testWriteAppLaunchProfilingConfigFile_noCurrentFileExists() throws {
@@ -1137,9 +1243,10 @@ extension SentryFileManagerTests {
             kSentryLaunchProfileConfigKeyProfilesSampleRate: expectedProfilesSampleRate,
             kSentryLaunchProfileConfigKeyProfilesSampleRand: expectedProfilesSampleRand
         ])
-        
-        let config = NSDictionary(contentsOf: launchProfileConfigFileURL())
-        
+
+        let configURL = try XCTUnwrap(launchProfileConfigFileURL())
+        let config = NSDictionary(contentsOf: configURL)
+
         let actualTracesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRate] as? NSNumber).doubleValue
         let actualTracesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRand] as? NSNumber).doubleValue
         let actualProfilesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRate] as? NSNumber).doubleValue
@@ -1169,8 +1276,9 @@ extension SentryFileManagerTests {
         ])
         
         // -- Assert --
-        let config = NSDictionary(contentsOf: launchProfileConfigFileURL())
-        
+        let configURL = try XCTUnwrap(launchProfileConfigFileURL())
+        let config = NSDictionary(contentsOf: configURL)
+
         let actualTracesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRate] as? NSNumber).doubleValue
         let actualTracesSampleRand = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyTracesSampleRand] as? NSNumber).doubleValue
         let actualProfilesSampleRate = try XCTUnwrap(config?[kSentryLaunchProfileConfigKeyProfilesSampleRate] as? NSNumber).doubleValue
@@ -1183,17 +1291,17 @@ extension SentryFileManagerTests {
     
     func testRemoveAppLaunchProfilingConfigFile() throws {
         try ensureAppLaunchProfileConfig(exists: true)
-        XCTAssertNotNil(NSDictionary(contentsOf: launchProfileConfigFileURL()))
+        XCTAssertNotNil(NSDictionary(contentsOf: try XCTUnwrap(launchProfileConfigFileURL())))
         removeAppLaunchProfilingConfigFile()
-        XCTAssertNil(NSDictionary(contentsOf: launchProfileConfigFileURL()))
+        XCTAssertNil(NSDictionary(contentsOf: try XCTUnwrap(launchProfileConfigFileURL())))
     }
     
     // if there's not a file when we expect one, just make sure we don't crash
     func testRemoveAppLaunchProfilingConfigFile_noFileExists() throws {
         try ensureAppLaunchProfileConfig(exists: false)
-        XCTAssertNil(NSDictionary(contentsOf: launchProfileConfigFileURL()))
+        XCTAssertNil(NSDictionary(contentsOf: try XCTUnwrap(launchProfileConfigFileURL())))
         removeAppLaunchProfilingConfigFile()
-        XCTAssertNil(NSDictionary(contentsOf: launchProfileConfigFileURL()))
+        XCTAssertNil(NSDictionary(contentsOf: try XCTUnwrap(launchProfileConfigFileURL())))
     }
     
     func testCheckForLaunchProfilingConfigFile_URLDoesNotExist() {
@@ -1207,14 +1315,120 @@ extension SentryFileManagerTests {
         XCTAssertFalse(appLaunchProfileConfigFileExists())
         
         // set the original value back so other tests don't crash
-        sentryLaunchConfigFileURL = (originalURL as NSURL)
+        sentryLaunchConfigFileURL = (originalURL as? NSURL)
+    }
+
+    func testSentryGetScopedCachesDirectory_targetIsNotMacOS_shouldReturnSamePath() throws {
+#if os(macOS)
+        throw XCTSkip("Test is disabled for macOS")
+#else
+        // -- Arrange --
+        let cachesDirectoryPath = "some/path/to/caches"
+
+        // -- Act --
+        let result = sentryGetScopedCachesDirectory(cachesDirectoryPath)
+
+        // -- Assert
+        XCTAssertEqual(result, cachesDirectoryPath)
+#endif // os(macOS)
+    }
+
+    func testSentryGetScopedCachesDirectory_targetIsMacOS_shouldReturnPath() throws {
+#if !os(macOS)
+        throw XCTSkip("Test is disabled for non macOS")
+#else
+        // -- Arrange --
+        let cachesDirectoryPath = "some/path/to/caches"
+
+        // -- Act --
+        let result = sentryGetScopedCachesDirectory(cachesDirectoryPath)
+
+        // -- Assert
+        // Xcode unit tests are not sandboxed, therefore we expect it to use the bundle identifier to unique the path
+        // The bundle identifier will then be the xctest bundle identifier
+        XCTAssertEqual(result, "some/path/to/caches/com.apple.dt.xctest.tool")
+#endif // os(macOS)
+
+    }
+
+    func testSentryBuildScopedCachesDirectoryPath_isSandboxed_shouldReturnInputPath() {
+        // -- Arrange --
+        let cachesDirectoryPath = "some/path/to/caches"
+        let isSandboxed = true
+        let bundleIdentifier: String? = nil
+        let lastPathComponent: String? = nil
+
+        // -- Act --
+        let result = sentryBuildScopedCachesDirectoryPath(
+            cachesDirectoryPath,
+            isSandboxed,
+            bundleIdentifier,
+            lastPathComponent
+        )
+
+        // -- Assert --
+        XCTAssertEqual(result, cachesDirectoryPath)
+    }
+
+    func test_sentryBuildScopedCachesDirectoryPath_inputCombinations() {
+        // -- Arrange --
+        for testCase: (isSandboxed: Bool, bundleIdentifier: String?, lastPathComponent: String?, expected: String?) in [
+            // bundleIdentifier defined
+            (isSandboxed: false, bundleIdentifier: "com.example.app", lastPathComponent: "AppBinaryName", expected: "some/path/to/caches/com.example.app"),
+            (isSandboxed: false, bundleIdentifier: "com.example.app", lastPathComponent: "", expected: "some/path/to/caches/com.example.app"),
+            (isSandboxed: false, bundleIdentifier: "com.example.app", lastPathComponent: nil, expected: "some/path/to/caches/com.example.app"),
+
+            // bundleIdentifier zero length string
+            (isSandboxed: false, bundleIdentifier: "", lastPathComponent: "AppBinaryName", expected: "some/path/to/caches/AppBinaryName"),
+            (isSandboxed: false, bundleIdentifier: "", lastPathComponent: "", expected: nil),
+            (isSandboxed: false, bundleIdentifier: "", lastPathComponent: nil, expected: nil),
+
+            // bundleIdentifier nil
+            (isSandboxed: false, bundleIdentifier: nil, lastPathComponent: "AppBinaryName", expected: "some/path/to/caches/AppBinaryName"),
+            (isSandboxed: false, bundleIdentifier: nil, lastPathComponent: "", expected: nil),
+            (isSandboxed: false, bundleIdentifier: nil, lastPathComponent: nil, expected: nil),
+
+            // for sandboxed scenarios, always return the original path
+            (isSandboxed: true, bundleIdentifier: "com.example.app", lastPathComponent: "AppBinaryName", expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: "", lastPathComponent: "AppBinaryName", expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: nil, lastPathComponent: "AppBinaryName", expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: "com.example.app", lastPathComponent: "", expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: "", lastPathComponent: "", expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: nil, lastPathComponent: "", expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: "com.example.app", lastPathComponent: nil, expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: "", lastPathComponent: nil, expected: "some/path/to/caches"),
+            (isSandboxed: true, bundleIdentifier: nil, lastPathComponent: nil, expected: "some/path/to/caches")
+        ] {
+            // -- Act --
+            let result = sentryBuildScopedCachesDirectoryPath(
+                "some/path/to/caches",
+                testCase.isSandboxed,
+                testCase.bundleIdentifier,
+                testCase.lastPathComponent
+            )
+
+            // -- Assert --
+            XCTAssertEqual(result, testCase.expected, "Inputs: (isSandboxed: \(testCase.isSandboxed), bundleIdentifier: \(String(describing: testCase.bundleIdentifier)), lastPathComponent: \(String(describing: testCase.lastPathComponent)), expected: \(String(describing: testCase.expected))); Output: \(String(describing: result))")
+        }
+    }
+
+    func testGetSentryPathAsURL_whenSentryPathIsValid_shouldReturnUrl() throws {
+        // We only cover the test case when the sentryPath is valid, because the path is built in the file manager's
+        // initializer and therefore the path is always valid to begin with.
+
+        // -- Act --
+        let url = sut.getSentryPathAsURL()
+
+        // -- Assert --
+        XCTAssertEqual(url.scheme, "file")
+        XCTAssertEqual(url.path, sut.sentryPath)
     }
 }
 
 // MARK: Private profiling tests
 private extension SentryFileManagerTests {
     func ensureAppLaunchProfileConfig(exists: Bool = true, tracesSampleRate: Double = 1, tracesSampleRand: Double = 1.0, profilesSampleRate: Double = 1, profilesSampleRand: Double = 1.0) throws {
-        let url = launchProfileConfigFileURL()
+        let url = try XCTUnwrap(launchProfileConfigFileURL())
         
         if exists {
             let dict = [
@@ -1236,6 +1450,7 @@ private extension SentryFileManagerTests {
 
 // MARK: Private
 private extension SentryFileManagerTests {
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func givenMaximumEnvelopes() {
         fixture.eventIds.forEach { id in
             let envelope = SentryEnvelope(id: id, singleItem: SentryEnvelopeItem(event: Event()))
@@ -1253,6 +1468,7 @@ private extension SentryFileManagerTests {
         }
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func givenOldEnvelopes() throws {
         let envelope = TestConstants.envelope
         let path = try XCTUnwrap(sut.store(envelope))
@@ -1310,20 +1526,20 @@ private extension SentryFileManagerTests {
     }
 
     func assertSessionInitMoved(_ actualSessionFileContents: SentryFileContents) throws {
-        let actualSessionEnvelope = SentrySerialization.envelope(with: actualSessionFileContents.contents)
+        let actualSessionEnvelope = SentrySerializationSwift.envelope(with: actualSessionFileContents.contents)
         XCTAssertEqual(2, actualSessionEnvelope?.items.count)
 
-        let actualSession = SentrySerialization.session(with: try XCTUnwrap(actualSessionEnvelope?.items.element(at: 1)).data)
+        let actualSession = SentrySerializationSwift.session(with: try XCTUnwrap(XCTUnwrap(actualSessionEnvelope?.items.element(at: 1)).data))
         XCTAssertNotNil(actualSession)
 
         XCTAssertEqual(fixture.expectedSessionUpdate, actualSession)
     }
     
     func assertSessionInitNotMoved(_ actualSessionFileContents: SentryFileContents) throws {
-        let actualSessionEnvelope = SentrySerialization.envelope(with: actualSessionFileContents.contents)
+        let actualSessionEnvelope = SentrySerializationSwift.envelope(with: actualSessionFileContents.contents)
         XCTAssertEqual(2, actualSessionEnvelope?.items.count)
 
-        let actualSession = SentrySerialization.session(with: try XCTUnwrap(actualSessionEnvelope?.items.first).data)
+        let actualSession = SentrySerializationSwift.session(with: try XCTUnwrap(XCTUnwrap(actualSessionEnvelope?.items.first).data))
         XCTAssertNotNil(actualSession)
 
         XCTAssertEqual(fixture.sessionUpdate, actualSession)
@@ -1331,8 +1547,8 @@ private extension SentryFileManagerTests {
 
     func assertSessionEnvelopesStored(count: Int) {
         let fileContentsWithSession = sut.getAllEnvelopes().filter { envelopeFileContents in
-            let envelope = SentrySerialization.envelope(with: envelopeFileContents.contents)
-            return !(envelope?.items.filter { item in item.header.type == SentryEnvelopeItemTypeSession }.isEmpty ?? false)
+            let envelope = SentrySerializationSwift.envelope(with: envelopeFileContents.contents)
+            return !(envelope?.items.filter { item in item.header.type == SentryEnvelopeItemTypes.session }.isEmpty ?? false)
         }
 
         XCTAssertEqual(count, fileContentsWithSession.count)

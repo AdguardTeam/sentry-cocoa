@@ -1,10 +1,14 @@
 #import "SentryTestObjCRuntimeWrapper.h"
-#import "SentryDefaultObjCRuntimeWrapper.h"
+#import "SentryDependencyContainer.h"
+#import "SentryInternalDefines.h"
+#import "SentrySwift.h"
 #import <objc/runtime.h>
+
+@protocol SentryObjCRuntimeWrapper;
 
 @interface SentryTestObjCRuntimeWrapper ()
 
-@property (nonatomic, strong) SentryDefaultObjCRuntimeWrapper *objcRuntimeWrapper;
+@property (nonatomic, strong) id<SentryObjCRuntimeWrapper> objcRuntimeWrapper;
 
 @end
 
@@ -13,7 +17,7 @@
 - (instancetype)init
 {
     if (self = [super init]) {
-        self.objcRuntimeWrapper = [SentryDefaultObjCRuntimeWrapper sharedInstance];
+        self.objcRuntimeWrapper = [[SentryDependencyContainer sharedInstance] objcRuntimeWrapper];
     }
 
     return self;
@@ -24,7 +28,14 @@
     if (self.beforeGetClassList != nil) {
         self.beforeGetClassList();
     }
-    const char **result = [self.objcRuntimeWrapper copyClassNamesForImage:image amount:outCount];
+
+    if (image == nil) {
+        return nil;
+    }
+
+    const char **result =
+        [self.objcRuntimeWrapper copyClassNamesForImage:SENTRY_UNWRAP_NULLABLE(const char, image)
+                                                 amount:outCount];
 
     if (self.classesNames != nil) {
         NSMutableArray *names = [NSMutableArray new];

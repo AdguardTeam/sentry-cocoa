@@ -1,15 +1,21 @@
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
-// swiftlint:disable file_length
 class SentrySDKTests: XCTestCase {
     
     private static let dsnAsString = TestConstants.dsnAsString(username: "SentrySDKTests")
     
     private class Fixture {
     
-        let options: Options
+        @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
+        let options: Options = {
+            let options = Options.noIntegrations()
+            options.dsn = SentrySDKTests.dsnAsString
+            options.releaseName = "1.0.0"
+            return options
+        }()
+
         let event: Event
         let scope: Scope
         let client: TestClient
@@ -19,71 +25,93 @@ class SentrySDKTests: XCTestCase {
         @available(*, deprecated, message: "SentryUserFeedback is deprecated in favor of SentryFeedback.")
         let userFeedback: UserFeedback
         let feedback: SentryFeedback
+
         let currentDate = TestCurrentDateProvider()
-        
+        let dispatchQueueWrapper = TestSentryDispatchQueueWrapper()
+
+#if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
+        let observer: SentryWatchdogTerminationScopeObserver
+        let scopePersistentStore: TestSentryScopePersistentStore
+#endif //  os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
+
         let scopeBlock: (Scope) -> Void = { scope in
             scope.setTag(value: "tag", key: "tag")
         }
-        
+
         var scopeWithBlockApplied: Scope {
             let scope = self.scope
             scopeBlock(scope)
             return scope
         }
-        
+
         let message = "message"
         let operation = "ui.load"
         let transactionName = "Load Main Screen"
-        
+
         @available(*, deprecated, message: "This is marked deprecated as a workaround until we can remove SentryUserFeedback in favor of SentryFeedback. When SentryUserFeedback is removed, this deprecation annotation can be removed.")
         init() {
             SentryDependencyContainer.sharedInstance().dateProvider = currentDate
-            
+
             event = Event()
             event.message = SentryMessage(formatted: message)
-            
+
             scope = Scope()
             scope.setTag(value: "value", key: "key")
-            
-            options = Options.noIntegrations()
-            options.dsn = SentrySDKTests.dsnAsString
-            options.releaseName = "1.0.0"
-            
+
             client = TestClient(options: options)!
-            hub = SentryHub(client: client, andScope: scope, andCrashWrapper: TestSentryCrashWrapper.sharedInstance(), andDispatchQueue: SentryDispatchQueueWrapper())
-            
+            hub = SentryHub(client: client, andScope: scope, andCrashWrapper: TestSentryCrashWrapper(processInfoWrapper: ProcessInfo.processInfo), andDispatchQueue: SentryDispatchQueueWrapper())
+
             userFeedback = UserFeedback(eventId: SentryId())
             userFeedback.comments = "Again really?"
             userFeedback.email = "tim@apple.com"
             userFeedback.name = "Tim Apple"
-            
+
             feedback = SentryFeedback(message: "Again really?", name: "Tim Apple", email: "tim@apple.com")
+            
+#if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
+            options.dsn = SentrySDKTests.dsnAsString
+
+            let fileManager = try! TestFileManager(
+                options: options,
+                dateProvider: currentDate,
+                dispatchQueueWrapper: dispatchQueueWrapper
+            )
+            let breadcrumbProcessor = SentryWatchdogTerminationBreadcrumbProcessor(maxBreadcrumbs: 10, fileManager: fileManager)
+            scopePersistentStore = try! XCTUnwrap(TestSentryScopePersistentStore(fileManager: fileManager))
+            let attributesProcessor = SentryWatchdogTerminationAttributesProcessor(
+                withDispatchQueueWrapper: dispatchQueueWrapper,
+                scopePersistentStore: scopePersistentStore
+            )
+            observer = SentryWatchdogTerminationScopeObserver(breadcrumbProcessor: breadcrumbProcessor, attributesProcessor: attributesProcessor)
+#endif //  os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
         }
     }
-    
+
     private var fixture: Fixture!
-    
+
     @available(*, deprecated, message: "This is marked deprecated as a workaround (for the workaround deprecating the Fixture.init method) until we can remove SentryUserFeedback in favor of SentryFeedback. When SentryUserFeedback is removed, this deprecation annotation can be removed.")
     override func setUp() {
         super.setUp()
         fixture = Fixture()
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     override func tearDown() {
         super.tearDown()
-        
+
         givenSdkWithHubButNoClient()
-        
-        if let autoSessionTracking = SentrySDK.currentHub().installedIntegrations().first(where: { it in
+
+        if let autoSessionTracking = SentrySDKInternal.currentHub().installedIntegrations().first(where: { it in
             it is SentryAutoSessionTrackingIntegration
         }) as? SentryAutoSessionTrackingIntegration {
             autoSessionTracking.stop()
         }
-        
+
         clearTestState()
     }
-    
+
     // Repro for: https://github.com/getsentry/sentry-cocoa/issues/1325
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testStartWithZeroMaxBreadcrumbsOptionsDoesNotCrash() {
         SentrySDK.start { options in
             options.dsn = SentrySDKTests.dsnAsString
@@ -92,10 +120,10 @@ class SentrySDKTests: XCTestCase {
         }
 
         SentrySDK.addBreadcrumb(Breadcrumb(level: SentryLevel.warning, category: "test"))
-        let breadcrumbs = Dynamic(SentrySDK.currentHub().scope).breadcrumbArray as [Breadcrumb]?
+        let breadcrumbs = Dynamic(SentrySDKInternal.currentHub().scope).breadcrumbArray as [Breadcrumb]?
         XCTAssertEqual(0, breadcrumbs?.count)
     }
-
+    
     func testStartWithConfigureOptions() {
         SentrySDK.start { options in
             options.dsn = SentrySDKTests.dsnAsString
@@ -103,71 +131,76 @@ class SentrySDKTests: XCTestCase {
             options.diagnosticLevel = SentryLevel.debug
             options.attachStacktrace = true
         }
-        
-        let hub = SentrySDK.currentHub()
+
+        let hub = SentrySDKInternal.currentHub()
         XCTAssertNotNil(hub)
         XCTAssertNotNil(hub.installedIntegrations)
         XCTAssertNotNil(hub.getClient()?.options)
-        
+
         let options = hub.getClient()?.options
         XCTAssertNotNil(options)
         XCTAssertEqual(SentrySDKTests.dsnAsString, options?.dsn)
         XCTAssertEqual(SentryLevel.debug, options?.diagnosticLevel)
         XCTAssertEqual(true, options?.attachStacktrace)
         XCTAssertEqual(true, options?.enableAutoSessionTracking)
-        
+
         var expectedIntegrations = [
             "SentryCrashIntegration",
             "SentryAutoBreadcrumbTrackingIntegration",
             "SentryAutoSessionTrackingIntegration",
             "SentryNetworkTrackingIntegration"
         ]
-        if !SentryDependencyContainer.sharedInstance().crashWrapper.isBeingTraced() {
+        if !SentryDependencyContainer.sharedInstance().crashWrapper.isBeingTraced {
             expectedIntegrations.append("SentryANRTrackingIntegration")
         }
 
         assertIntegrationsInstalled(integrations: expectedIntegrations)
     }
 
-    func testStartStopBinaryImageCache() {
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
+    func testStartStopBinaryImageCache() throws {
         SentrySDK.start { options in
             options.debug = true
             options.removeAllIntegrations()
         }
 
         XCTAssertNotNil(SentryDependencyContainer.sharedInstance().binaryImageCache.cache)
-        XCTAssertGreaterThan(SentryDependencyContainer.sharedInstance().binaryImageCache.cache.count, 0)
+        let cache = try XCTUnwrap(SentryDependencyContainer.sharedInstance().binaryImageCache.cache)
+        XCTAssertGreaterThan(cache.count, 0)
 
         SentrySDK.close()
 
         XCTAssertNil(SentryDependencyContainer.sharedInstance().binaryImageCache.cache)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testStartWithConfigureOptions_NoDsn() throws {
         SentrySDK.start { options in
             options.debug = true
             options.removeAllIntegrations()
         }
-        
-        let options = SentrySDK.currentHub().getClient()?.options
+
+        let options = SentrySDKInternal.currentHub().getClient()?.options
         XCTAssertNotNil(options, "Options should not be nil")
         XCTAssertNil(options?.parsedDsn)
         XCTAssertTrue(options?.enabled ?? false)
         XCTAssertEqual(true, options?.debug)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testStartWithConfigureOptions_WrongDsn() throws {
         SentrySDK.start { options in
             options.dsn = "wrong"
             options.removeAllIntegrations()
         }
-        
-        let options = SentrySDK.currentHub().getClient()?.options
+
+        let options = SentrySDKInternal.currentHub().getClient()?.options
         XCTAssertNotNil(options, "Options should not be nil")
         XCTAssertTrue(options?.enabled ?? false)
         XCTAssertNil(options?.parsedDsn)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testStartWithConfigureOptions_BeforeSend() {
         var wasBeforeSendCalled = false
         SentrySDK.start { options in
@@ -178,12 +211,13 @@ class SentrySDKTests: XCTestCase {
             }
             options.removeAllIntegrations()
         }
-        
+
         SentrySDK.capture(message: "")
-        
+
         XCTAssertTrue(wasBeforeSendCalled, "beforeSend was not called.")
     }
 
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testStartWithScope() {
         let scope = Scope()
         scope.setUser(User(userId: "me"))
@@ -196,944 +230,371 @@ class SentrySDKTests: XCTestCase {
             }
             options.removeAllIntegrations()
         }
-        XCTAssertEqual("me", SentrySDK.currentHub().scope.userObject?.userId)
-        XCTAssertIdentical(scope, SentrySDK.currentHub().scope)
+        XCTAssertEqual("me", SentrySDKInternal.currentHub().scope.userObject?.userId)
+        XCTAssertIdentical(scope, SentrySDKInternal.currentHub().scope)
     }
-    
+
     func testDontStartInsideXcodePreview() {
         startprocessInfoWrapperForPreview()
-        
+
         SentrySDK.start { options in
             options.debug = true
         }
 
         XCTAssertFalse(SentrySDK.isEnabled)
     }
-    
+
     func testCrashedLastRun() {
         XCTAssertEqual(SentryDependencyContainer.sharedInstance().crashReporter.crashedLastLaunch, SentrySDK.crashedLastRun)
     }
-    
+
     func testDetectedStartUpCrash_DefaultValue() {
         XCTAssertFalse(SentrySDK.detectedStartUpCrash)
     }
     
-    func testDetectedStartUpCrash() {
-        SentrySDK.setDetectedStartUpCrash(true)
-        XCTAssertEqual(SentrySDK.detectedStartUpCrash, true)
-        
-        SentrySDK.setDetectedStartUpCrash(false)
-        XCTAssertFalse(SentrySDK.detectedStartUpCrash)
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
+    func testInstallIntegrations_NoIntegrations() {
+        SentrySDK.start { options in
+            options.removeAllIntegrations()
+        }
+
+        assertIntegrationsInstalled(integrations: [])
     }
-    
-    func testCaptureCrashEvent() {
-        let hub = TestHub(client: nil, andScope: nil)
-        SentrySDK.setCurrentHub(hub)
-        
-        let event = fixture.event
-        SentrySDK.captureCrash(event)
-    
-        XCTAssertEqual(1, hub.sentCrashEvents.count)
-        XCTAssertEqual(event.message, hub.sentCrashEvents.first?.message)
-        XCTAssertEqual(event.eventId, hub.sentCrashEvents.first?.eventId)
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
+    func testGlobalOptions() {
+        SentrySDK.start(options: fixture.options)
+        XCTAssertEqual(SentrySDKInternal.options, fixture.options)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
+    func testGlobalOptionsForPreview() {
+        startprocessInfoWrapperForPreview()
+
+        SentrySDK.start(options: fixture.options)
+        XCTAssertEqual(SentrySDKInternal.options, fixture.options)
+    }
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureEvent() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(event: fixture.event)
-        
+
         assertEventCaptured(expectedScope: fixture.scope)
     }
 
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureEventWithScope() {
         givenSdkWithHub()
-        
+
         let scope = Scope()
         SentrySDK.capture(event: fixture.event, scope: scope)
     
         assertEventCaptured(expectedScope: scope)
     }
        
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureEventWithScopeBlock_ScopePassedToHub() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(event: fixture.event, block: fixture.scopeBlock)
     
         assertEventCaptured(expectedScope: fixture.scopeWithBlockApplied)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureEventWithScopeBlock_CreatesNewScope() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(event: fixture.event, block: fixture.scopeBlock)
     
         assertHubScopeNotChanged()
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureError() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(error: fixture.error)
-        
+
         assertErrorCaptured(expectedScope: fixture.scope)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureErrorWithScope() {
         givenSdkWithHub()
-        
+
         let scope = Scope()
         SentrySDK.capture(error: fixture.error, scope: scope)
-        
+
         assertErrorCaptured(expectedScope: scope)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureErrorWithScopeBlock_ScopePassedToHub() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(error: fixture.error, block: fixture.scopeBlock)
-        
+
         assertErrorCaptured(expectedScope: fixture.scopeWithBlockApplied)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureErrorWithScopeBlock_CreatesNewScope() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(error: fixture.error, block: fixture.scopeBlock)
-        
+
         assertHubScopeNotChanged()
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureException() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(exception: fixture.exception)
-        
+
         assertExceptionCaptured(expectedScope: fixture.scope)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureExceptionWithScope() {
         givenSdkWithHub()
-        
+
         let scope = Scope()
         SentrySDK.capture(exception: fixture.exception, scope: scope)
-        
+
         assertExceptionCaptured(expectedScope: scope)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureExceptionWithScopeBlock_ScopePassedToHub() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(exception: fixture.exception, block: fixture.scopeBlock)
-        
+
         assertExceptionCaptured(expectedScope: fixture.scopeWithBlockApplied)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureExceptionWithScopeBlock_CreatesNewScope() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(exception: fixture.exception, block: fixture.scopeBlock)
-        
+
         assertHubScopeNotChanged()
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureMessageWithScopeBlock_ScopePassedToHub() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(message: fixture.message, block: fixture.scopeBlock)
-        
+
         assertMessageCaptured(expectedScope: fixture.scopeWithBlockApplied)
     }
-    
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testCaptureMessageWithScopeBlock_CreatesNewScope() {
         givenSdkWithHub()
-        
+
         SentrySDK.capture(message: fixture.message, block: fixture.scopeBlock)
-        
+
         assertHubScopeNotChanged()
     }
     
-    func testCaptureEnvelope() {
-        givenSdkWithHub()
-        
-        let envelope = SentryEnvelope(event: TestData.event)
-        SentrySDK.capture(envelope)
-        
-        XCTAssertEqual(1, fixture.client.captureEnvelopeInvocations.count)
-        XCTAssertEqual(envelope.header.eventId, fixture.client.captureEnvelopeInvocations.first?.header.eventId)
-    }
-    
-    func testStoreEnvelope() {
-        givenSdkWithHub()
-        
-        let envelope = SentryEnvelope(event: TestData.event)
-        SentrySDK.store(envelope)
-        
-        XCTAssertEqual(1, fixture.client.storedEnvelopeInvocations.count)
-        XCTAssertEqual(envelope.header.eventId, fixture.client.storedEnvelopeInvocations.first?.header.eventId)
-    }
-    
-    /// This is to prevent https://github.com/getsentry/sentry-cocoa/issues/4280
-    /// With 8.33.0, writing an envelope could fail in the middle of the process, which the envelope
-    /// payload below simulates. The JSON stems from writing an envelope to disk with vast data
-    /// that leads to an OOM termination on v 8.33.0.
-    /// Running this test on v 8.33.0 leads to a crash.
-    func testStartSDK_WithCorruptedEnvelope() throws {
-        
-        let fileManager = try SentryFileManager(options: fixture.options)
-        
-        let corruptedEnvelopeData = """
-                       {"event_id":"1990b5bc31904b7395fd07feb72daf1c","sdk":{"name":"sentry.cocoa","version":"8.33.0"}}
-                       {"type":"test","length":50}
-                       """.data(using: .utf8)!
-        
-        try corruptedEnvelopeData.write(to: URL(fileURLWithPath: "\(fileManager.envelopesPath)/corrupted-envelope.json"))
-        
-        SentrySDK.start(options: fixture.options)
-        
+    /// When events don't have debug meta the backend can't symbolicate the stack trace of events.
+    /// This is a regression test for https://github.com/getsentry/sentry-cocoa/issues/5334
+    func testCaptureNonFatalEvent_HasDebugMeta() throws {
+        // Arrange
+        SentrySDK.start { options in
+            options.dsn = TestConstants.dsnAsString(username: "testCaptureNonFatalEvent_HasDebugMeta")
+        }
+
+        let fileManager = try XCTUnwrap(SentrySDKInternal.currentHub().getClient()?.fileManager)
         fileManager.deleteAllEnvelopes()
-    }
-    
-    func testStoreEnvelope_WhenNoClient_NoCrash() {
-        SentrySDK.store(SentryEnvelope(event: TestData.event))
-        
-        XCTAssertEqual(0, fixture.client.storedEnvelopeInvocations.count)
-    }
-    
-    @available(*, deprecated, message: "-[SentrySDK captureUserFeedback:] is deprecated. -[SentrySDK captureFeedback:] is the new way. This test case can be removed in favor of testCaptureFeedback when -[SentrySDK captureUserFeedback:] is removed.")
-    func testCaptureUserFeedback() {
-        givenSdkWithHub()
-        
-        SentrySDK.capture(userFeedback: fixture.userFeedback)
-        let client = fixture.client
-        XCTAssertEqual(1, client.captureUserFeedbackInvocations.count)
-        if let actual = client.captureUserFeedbackInvocations.first {
-            let expected = fixture.userFeedback
-            XCTAssertEqual(expected.eventId, actual.eventId)
-            XCTAssertEqual(expected.name, actual.name)
-            XCTAssertEqual(expected.email, actual.email)
-            XCTAssertEqual(expected.comments, actual.comments)
-        }
-    }
-    
-    func testCaptureFeedback() {
-        givenSdkWithHub()
-        
-        SentrySDK.capture(feedback: fixture.feedback)
-        let client = fixture.client
-        XCTAssertEqual(1, client.captureFeedbackInvocations.count)
-        if let actual = client.captureFeedbackInvocations.first {
-            let expected = fixture.feedback
-            XCTAssertEqual(expected.eventId, actual.0.eventId)
-            XCTAssertEqual(expected.name, actual.0.name)
-            XCTAssertEqual(expected.email, actual.0.email)
-            XCTAssertEqual(expected.message, actual.0.message)
-        }
-    }
-    
-    func testSetUser_SetsUserToScopeOfHub() {
-        givenSdkWithHub()
-        
-        let user = TestData.user
-        SentrySDK.setUser(user)
-        
-        let actualScope = SentrySDK.currentHub().scope
-        let event = actualScope.applyTo(event: fixture.event, maxBreadcrumbs: 10)
-        XCTAssertEqual(event?.user, user)
-    }
-    
-    func testSetUserBeforeStartingSDK_LogsFatalMessage() throws {
-        // Arrange
-        let oldOutput = SentryLog.getLogOutput()
-        
+
         defer {
-            SentryLog.setLogOutput(oldOutput)
+            fileManager.deleteAllEnvelopes()
         }
-        
-        let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        
+
         // Act
-        SentrySDK.setUser(nil)
-    
+        SentrySDK.capture(message: "Test message")
+        // Ensures that the capture envelope is written to disk before we read it.
+        SentrySDK.flush(timeout: 0.1)
+
         // Assert
-        let actualLogMessage = try XCTUnwrap(logOutput.loggedMessages.first)
-        let expectedLogMessage = "The SDK is disabled, so setUser doesn't work. Please ensure to start the SDK before setting the user."
-        
-        XCTAssertTrue(actualLogMessage.contains(expectedLogMessage), "Expected log message to contain '\(expectedLogMessage)', but got '\(actualLogMessage)'")
-    }
-    
-    func testSetUserAFterStartingSDK_DoesNotLogFatalMessage() {
-        // Arrange
-        let oldOutput = SentryLog.getLogOutput()
-        
-        defer {
-            SentryLog.setLogOutput(oldOutput)
+        let eventEnvelopeItems = try fileManager.getAllEnvelopes().map { fileContent in
+            return try XCTUnwrap(SentrySerializationSwift.envelope(with: fileContent.contents))
+        }.flatMap { envelope in
+            return envelope.items.filter { $0.header.type == SentryEnvelopeItemTypes.event }
         }
-        
-        let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        
-        givenSdkWithHub()
-        
-        let user = TestData.user
-        
-        // Act
-        SentrySDK.setUser(user)
-        
-        //Assert
-        XCTAssertEqual(0, logOutput.loggedMessages.count, "Expected no log messages, but got \(logOutput.loggedMessages.count)")
-    }
-    
-    func testStartTransaction() throws {
-        givenSdkWithHub()
-        
-        let operation = "ui.load"
-        let name = "Load Main Screen"
-        let transaction = SentrySDK.startTransaction(name: name, operation: operation)
-        
-        XCTAssertEqual(operation, transaction.operation)
-        let tracer = try XCTUnwrap(transaction as? SentryTracer)
-        XCTAssertEqual(name, tracer.traceContext?.transaction)
-        
-        XCTAssertNil(SentrySDK.span)
-    }
-    
-    func testStartTransaction_WithBindToScope() throws {
-        givenSdkWithHub()
-        
-        let transaction = SentrySDK.startTransaction(name: fixture.transactionName, operation: fixture.operation, bindToScope: true)
-        
-        XCTAssertEqual(fixture.operation, transaction.operation)
-        let tracer = try XCTUnwrap(transaction as? SentryTracer)
-        XCTAssertEqual(fixture.transactionName, tracer.traceContext?.transaction)
-        XCTAssertEqual(.custom, tracer.transactionContext.nameSource)
-        
-        let newSpan = SentrySDK.span
-        
-        XCTAssert(transaction === newSpan)
-    }
-    
-#if os(iOS) || os(macOS) || targetEnvironment(macCatalyst)
 
-    func testStartingContinuousProfilerWithSampleRateZero() throws {
-        givenSdkWithHub()
-        
-        fixture.options.profilesSampleRate = 0
-        XCTAssertEqual(try XCTUnwrap(fixture.options.profilesSampleRate).doubleValue, 0)
+        XCTAssertEqual(eventEnvelopeItems.count, 1, "Expected exactly one event envelope item, but got \(eventEnvelopeItems.count)")
+        let eventEnvelopeItem = try XCTUnwrap(eventEnvelopeItems.first)
 
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-        SentrySDK.startProfiler()
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
+        let event = try XCTUnwrap( SentryEventDecoder.decodeEvent(jsonData: XCTUnwrap(eventEnvelopeItem.data)))
+
+        let debugMetas = try XCTUnwrap(event.debugMeta, "Expected event to have debug meta but got nil")
+        // During local testing we got 6 debug metas, but to avoid flakiness in CI we only check for 3.
+        XCTAssertGreaterThanOrEqual(debugMetas.count, 3, "Expected debug meta to have at least 3 items, but got \(debugMetas.count)")
+
+        for debugMeta in debugMetas {
+            XCTAssertEqual(debugMeta.type, "macho")
+            XCTAssertNotNil(debugMeta.debugID)
+            XCTAssertNotNil(debugMeta.imageAddress)
+            XCTAssertNotNil(debugMeta.imageSize)
+        }
     }
 
-    func testStartingContinuousProfilerWithSampleRateNil() throws {
-        givenSdkWithHub()
+    // MARK: - Logger Flush Tests
+    
+    func testFlush_CallsLoggerCaptureLogs() {
+        fixture.client.options.experimental.enableLogs = true
+        SentrySDKInternal.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setStart(with: fixture.client.options)
         
-        // nil is the default initial value for profilesSampleRate, so we don't have to explicitly set it on the fixture
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-        SentrySDK.startProfiler()
-        XCTAssert(SentryContinuousProfiler.isCurrentlyProfiling())
-    }
-
-    func testNotStartingContinuousProfilerWithSampleRateBlock() throws {
-        givenSdkWithHub()
+        // Add a log to ensure there's something to flush
+        SentrySDK.logger.info("Test log message")
         
-        fixture.options.profilesSampler = { _ in 0 }
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-        SentrySDK.startProfiler()
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
+        // Initially no logs should be sent (they're buffered)
+        XCTAssertEqual(fixture.client.captureLogsDataInvocations.count, 0)
+        
+        // Flush the SDK
+        SentrySDK.flush(timeout: 1.0)
+        
+        // Now logs should be sent
+        XCTAssertEqual(fixture.client.captureLogsDataInvocations.count, 1)
     }
     
-    func testNotStartingContinuousProfilerWithSampleRateNonZero() throws {
-        givenSdkWithHub()
-
-        fixture.options.profilesSampleRate = 1
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-        SentrySDK.startProfiler()
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-    }
-    
-#endif // os(iOS) || os(macOS) || targetEnvironment(macCatalyst)
-    
-    func testInstallIntegrations() throws {
-        let options = Options()
-        options.dsn = "mine"
-        options.integrations = ["SentryTestIntegration", "SentryTestIntegration", "IDontExist"]
+    func testClose_CallsLoggerCaptureLogs() {
+        fixture.client.options.experimental.enableLogs = true
+        SentrySDKInternal.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setStart(with: fixture.client.options)
         
-        SentrySDK.start(options: options)
+        // Add a log to ensure there's something to flush
+        SentrySDK.logger.info("Test log message")
         
-        assertIntegrationsInstalled(integrations: ["SentryTestIntegration"])
-        let integration = SentrySDK.currentHub().installedIntegrations().first
-        if let testIntegration = integration as? SentryTestIntegration {
-            XCTAssertEqual(options.dsn, testIntegration.options.dsn)
-            XCTAssertEqual(options.integrations, testIntegration.options.integrations)
-        }
-    }
-    
-    func testInstallIntegrations_NoIntegrations() {
-        SentrySDK.start { options in
-            options.removeAllIntegrations()
-        }
+        // Initially no logs should be sent (they're buffered)
+        XCTAssertEqual(fixture.client.captureLogsDataInvocations.count, 0)
         
-        assertIntegrationsInstalled(integrations: [])
-    }
-    
-    func testStartSession() {
-        givenSdkWithHub()
-        
-        SentrySDK.startSession()
-        
-        XCTAssertEqual(1, fixture.client.captureSessionInvocations.count)
-        
-        let actual = fixture.client.captureSessionInvocations.first
-        let expected = SentrySession(releaseName: fixture.options.releaseName ?? "", distinctId: "some-id")
-        
-        XCTAssertEqual(expected.flagInit, actual?.flagInit)
-        XCTAssertEqual(expected.errors, actual?.errors)
-        XCTAssertEqual(expected.sequence, actual?.sequence)
-        XCTAssertEqual(expected.releaseName, actual?.releaseName)
-        XCTAssertEqual(SentryDependencyContainer.sharedInstance().dateProvider.date(), actual?.started)
-        XCTAssertEqual(SentrySessionStatus.ok, actual?.status)
-        XCTAssertNil(actual?.timestamp)
-        XCTAssertNil(actual?.duration)
-    }
-    
-    func testEndSession() throws {
-        givenSdkWithHub()
-        
-        SentrySDK.startSession()
-        advanceTime(bySeconds: 1)
-        SentrySDK.endSession()
-        
-        XCTAssertEqual(2, fixture.client.captureSessionInvocations.count)
-        
-        let actual = try XCTUnwrap(fixture.client.captureSessionInvocations.invocations.last)
-        
-        XCTAssertNil(actual.flagInit)
-        XCTAssertEqual(0, actual.errors)
-        XCTAssertEqual(2, actual.sequence)
-        XCTAssertEqual(SentrySessionStatus.exited, actual.status)
-        XCTAssertEqual(fixture.options.releaseName ?? "", actual.releaseName)
-        XCTAssertEqual(1, actual.duration)
-        XCTAssertEqual(SentryDependencyContainer.sharedInstance().dateProvider.date(), actual.timestamp)
-    }
-    
-    func testGlobalOptions() {
-        SentrySDK.start(options: fixture.options)
-        XCTAssertEqual(SentrySDK.options, fixture.options)
-    }
-    
-    func testGlobalOptionsForPreview() {
-        startprocessInfoWrapperForPreview()
-        
-        SentrySDK.start(options: fixture.options)
-        XCTAssertEqual(SentrySDK.options, fixture.options)
-    }
-
-#if SENTRY_HAS_UIKIT
-    func testSetAppStartMeasurement_CallsPrivateSDKCallback() {
-        let appStartMeasurement = TestData.getAppStartMeasurement(type: .warm)
-        
-        var callbackCalled = false
-        PrivateSentrySDKOnly.onAppStartMeasurementAvailable = { measurement in
-            XCTAssertEqual(appStartMeasurement, measurement)
-            callbackCalled = true
-        }
-        
-        SentrySDK.setAppStartMeasurement(appStartMeasurement)
-        XCTAssertTrue(callbackCalled)
-    }
-    
-    func testSetAppStartMeasurement_NoCallback_CallbackNotCalled() {
-        let appStartMeasurement = TestData.getAppStartMeasurement(type: .warm)
-        
-        SentrySDK.setAppStartMeasurement(appStartMeasurement)
-        
-        XCTAssertEqual(SentrySDK.getAppStartMeasurement(), appStartMeasurement)
-    }
-#endif // SENTRY_HAS_UIKIT
-    
-    func testSDKStartInvocations() {
-        XCTAssertEqual(0, SentrySDK.startInvocations)
-        
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        
-        XCTAssertEqual(1, SentrySDK.startInvocations)
-    }
-    
-    func testSDKStartTimestamp() {
-        let currentDateProvider = TestCurrentDateProvider()
-        SentryDependencyContainer.sharedInstance().dateProvider = currentDateProvider
-        
-        XCTAssertNil(SentrySDK.startTimestamp)
-        
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        
-        XCTAssertEqual(SentrySDK.startTimestamp, currentDateProvider.date())
-        
-        SentrySDK.close()
-        XCTAssertNil(SentrySDK.startTimestamp)
-    }
-    
-    func testIsEnabled() {
-        XCTAssertFalse(SentrySDK.isEnabled)
-        
-        SentrySDK.capture(message: "message")
-        XCTAssertFalse(SentrySDK.isEnabled)
-        
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        XCTAssertTrue(SentrySDK.isEnabled)
-        
-        SentrySDK.close()
-        XCTAssertFalse(SentrySDK.isEnabled)
-        
-        SentrySDK.capture(message: "message")
-        XCTAssertFalse(SentrySDK.isEnabled)
-        
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        XCTAssertTrue(SentrySDK.isEnabled)
-    }
-    
-    func testClose_ResetsDependencyContainer() {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        
-        let first = SentryDependencyContainer.sharedInstance()
-        
+        // Close the SDK
         SentrySDK.close()
         
-        let second = SentryDependencyContainer.sharedInstance()
-        
-        XCTAssertNotEqual(first, second)
+        // Now logs should be sent
+        XCTAssertEqual(fixture.client.captureLogsDataInvocations.count, 1)
     }
     
-    func testClose_ClearsIntegrations() {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.swiftAsyncStacktraces = true
-            options.setIntegrations([SentrySwiftAsyncIntegration.self])
-        }
+    func testLogger_RecreatedWhenSDKStartedAfterAccess() {
+        // Access logger before SDK is started
+        let loggerBeforeStart = SentrySDK.logger
         
-        let hub = SentrySDK.currentHub()
-        XCTAssertEqual(1, hub.installedIntegrations().count)
-        SentrySDK.close()
-        XCTAssertEqual(0, hub.installedIntegrations().count)
-        assertIntegrationsInstalled(integrations: [])
-    }
-
-#if SENTRY_HAS_UIKIT
-    func testClose_StopsAppStateManager() {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.tracesSampleRate = 1
-            options.removeAllIntegrations()
-        }
-
-        let appStateManager = SentryDependencyContainer.sharedInstance().appStateManager
-        XCTAssertEqual(appStateManager.startCount, 1)
-
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.tracesSampleRate = 1
-            options.removeAllIntegrations()
-        }
-
-        XCTAssertEqual(appStateManager.startCount, 2)
-
-        SentrySDK.close()
-
-        XCTAssertEqual(appStateManager.startCount, 0)
-
-        let stateAfterStop = fixture.fileManager.readAppState()
-        XCTAssertFalse(stateAfterStop!.isSDKRunning)
-    }
-#endif
-
-#if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
-    func testReportFullyDisplayed() {
-        fixture.options.enableTimeToFullDisplayTracing = true
-
-        SentrySDK.start(options: fixture.options)
-
-        let testTTDTracker = TestTimeToDisplayTracker(waitForFullDisplay: true)
+        // Now properly start the SDK using internal APIs  
+        fixture.client.options.experimental.enableLogs = true
+        SentrySDKInternal.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setStart(with: fixture.client.options)
         
-        Dynamic(SentryUIViewControllerPerformanceTracker.shared).currentTTDTracker = testTTDTracker
-
-        SentrySDK.reportFullyDisplayed()
-
-        XCTAssertTrue(testTTDTracker.registerFullDisplayCalled)
-    }
-#endif
-
-#if os(iOS)
-    func testSentryUIDeviceWrapperStarted() {
-        let deviceWrapper = TestSentryUIDeviceWrapper()
-        SentryDependencyContainer.sharedInstance().uiDeviceWrapper = deviceWrapper
-        SentrySDK.start(options: fixture.options)
-        XCTAssertTrue(deviceWrapper.started)
-    }
-
-    func testSentryUIDeviceWrapperStopped() {
-        let deviceWrapper = TestSentryUIDeviceWrapper()
-        SentryDependencyContainer.sharedInstance().uiDeviceWrapper = deviceWrapper
-        SentrySDK.start(options: fixture.options)
-        SentrySDK.close()
-        XCTAssertFalse(deviceWrapper.started)
-    }
-    
-    /// Ensure to start the UIDeviceWrapper before initializing the hub, so enrich scope sets the correct OS version.
-    func testStartSDK_ScopeContextContainsOSVersion() throws {
-        let expectation = expectation(description: "MainThreadTestIntegration install called")
-        MainThreadTestIntegration.expectation = expectation
+        // Access logger again after SDK is started
+        let loggerAfterStart = SentrySDK.logger
         
-        DispatchQueue.global(qos: .default).async {
-            SentrySDK.start { options in
-                options.integrations = [ NSStringFromClass(MainThreadTestIntegration.self) ]
-            }
-        }
+        // Verify it's a different instance (recreated)
+        XCTAssertNotIdentical(loggerBeforeStart, loggerAfterStart)
         
-        wait(for: [expectation], timeout: 1.0)
+        // Verify the new logger can actually capture logs
+        loggerAfterStart.info("Test log message")
         
-        let os = try XCTUnwrap (SentrySDK.currentHub().scope.contextDictionary["os"] as? [String: Any])
-#if !targetEnvironment(macCatalyst)
-        XCTAssertEqual(UIDevice.current.systemVersion, os["version"] as? String)
-#endif
-    }
-#endif
-    
-    func testResumeAndPauseAppHangTracking() {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.setIntegrations([SentryANRTrackingIntegration.self])
-        }
-        
-        let client = fixture.client
-        SentrySDK.currentHub().bindClient(client)
-        
-        let anrTrackingIntegration = SentrySDK.currentHub().getInstalledIntegration(SentryANRTrackingIntegration.self)
-        
-        SentrySDK.pauseAppHangTracking()
-        Dynamic(anrTrackingIntegration).anrDetectedWithType(SentryANRType.unknown)
-        XCTAssertEqual(0, client.captureEventWithScopeInvocations.count)
-        
-        SentrySDK.resumeAppHangTracking()
-        Dynamic(anrTrackingIntegration).anrDetectedWithType(SentryANRType.unknown)
-        
-        if SentryDependencyContainer.sharedInstance().crashWrapper.isBeingTraced() {
-            XCTAssertEqual(0, client.captureEventWithScopeInvocations.count)
-        } else {
-            XCTAssertEqual(1, client.captureEventWithScopeInvocations.count)
-        }
-    }
-    
-    func testResumeAndPauseAppHangTracking_ANRTrackingNotInstalled() {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        
-        let client = fixture.client
-        SentrySDK.currentHub().bindClient(client)
-
-        // Both invocations do nothing
-        SentrySDK.pauseAppHangTracking()
-        SentrySDK.resumeAppHangTracking()
-    }
-
-    func testClose_SetsClientToNil() {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        
+        // Force flush by closing the SDK
         SentrySDK.close()
         
-        XCTAssertNil(SentrySDK.currentHub().client())
+        // Verify log was captured
+        XCTAssertEqual(fixture.client.captureLogsDataInvocations.count, 1)
     }
     
-    func testClose_ClosesClient() {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
+    func testLogger_WhenLogsDisabled() {
+        // Start SDK with logs disabled
+        fixture.client.options.experimental.enableLogs = false
+        SentrySDKInternal.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setStart(with: fixture.client.options)
+        
+        // Access logger
+        let logger = SentrySDK.logger
+        
+        // Verify that logs are not captured when disabled
+        logger.info("Test log message")
+        
+        // Wait a bit for async processing
+        let expectation = self.expectation(description: "Wait for log capture")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            expectation.fulfill()
         }
+        waitForExpectations(timeout: 5.0)
         
-        let client = SentrySDK.currentHub().client()
-        SentrySDK.close()
-        
-        XCTAssertFalse(client?.isEnabled ?? true)
+        // Verify no logs were captured
+        XCTAssertEqual(fixture.client.captureLogsDataInvocations.count, 0)
     }
-    
-    func testClose_CallsFlushCorrectlyOnTransport() throws {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        
-        let transport = TestTransport()
-        let client = SentryClient(options: fixture.options, fileManager: try TestFileManager(options: fixture.options), deleteOldEnvelopeItems: false)
-        Dynamic(client).transportAdapter = TestTransportAdapter(transports: [transport], options: fixture.options)
-        SentrySDK.currentHub().bindClient(client)
-        SentrySDK.close()
-        
-        XCTAssertEqual(Options().shutdownTimeInterval, transport.flushInvocations.first)
-    }
-    
-    func testFlush_CallsFlushCorrectlyOnTransport() throws {
-        SentrySDK.start { options in
-            options.dsn = SentrySDKTests.dsnAsString
-            options.removeAllIntegrations()
-        }
-        
-        let transport = TestTransport()
-        let client = SentryClient(options: fixture.options, fileManager: try TestFileManager(options: fixture.options), deleteOldEnvelopeItems: false)
-        Dynamic(client).transportAdapter = TestTransportAdapter(transports: [transport], options: fixture.options)
-        SentrySDK.currentHub().bindClient(client)
-        
-        let flushTimeout = 10.0
-        SentrySDK.flush(timeout: flushTimeout)
-        
-        XCTAssertEqual(flushTimeout, transport.flushInvocations.first)
-    }
-
-    func testStartOnTheMainThread() throws {
-        let expectation = expectation(description: "MainThreadTestIntegration install called")
-        MainThreadTestIntegration.expectation = expectation
-        
-        print("[Sentry] [TEST] [\(#file):\(#line) Dispatching to nonmain queue.")
-        DispatchQueue.global(qos: .background).async {
-            print("[Sentry] [TEST] [\(#file):\(#line) About to start SDK from nonmain queue.")
-            SentrySDK.start { options in
-                print("[Sentry] [TEST] [\(#file):\(#line) configuring options.")
-                options.integrations = [ NSStringFromClass(MainThreadTestIntegration.self) ]
-            }
-        }
-        
-        wait(for: [expectation], timeout: 1.0)
-        
-        let mainThreadIntegration = try XCTUnwrap(SentrySDK.currentHub().installedIntegrations().first as? MainThreadTestIntegration)
-        XCTAssert(mainThreadIntegration.installedInTheMainThread, "SDK is not being initialized in the main thread")
-        
-    }
-
-#if os(iOS) || os(macOS) || targetEnvironment(macCatalyst)
-    func testStartingAndStoppingContinuousProfiler() throws {
-        let timerFactory = TestSentryNSTimerFactory(currentDateProvider: fixture.currentDate)
-        let originalTimerFactory = SentryDependencyContainer.sharedInstance().timerFactory
-        SentryDependencyContainer.sharedInstance().timerFactory = timerFactory
-
-        givenSdkWithHub()
-        SentrySDK.startProfiler()
-        XCTAssert(SentryContinuousProfiler.isCurrentlyProfiling())
-        SentrySDK.stopProfiler()
-
-        fixture.currentDate.advance(by: 60)
-        try timerFactory.check()
-
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-        SentryDependencyContainer.sharedInstance().timerFactory = originalTimerFactory
-    }
-
-    func testStartingContinuousProfilerBeforeStartingSDK() {
-        SentrySDK.startProfiler()
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-    }
-
-    func testStartingContinuousProfilerAfterStoppingSDK() {
-        givenSdkWithHub()
-        SentrySDK.close()
-        SentrySDK.startProfiler()
-        XCTAssertFalse(SentryContinuousProfiler.isCurrentlyProfiling())
-    }
-#endif // os(iOS) || os(macOS) || targetEnvironment(macCatalyst)
-
-#if SENTRY_HAS_UIKIT
-    
-    func testSetAppStartMeasurementConcurrently() {
-        func setAppStartMeasurement(_ queue: DispatchQueue, _ i: Int) {
-            group.enter()
-            queue.async {
-                let timestamp = SentryDependencyContainer.sharedInstance().dateProvider.date().addingTimeInterval( TimeInterval(i))
-                let appStartMeasurement = TestData.getAppStartMeasurement(type: .warm, appStartTimestamp: timestamp)
-                SentrySDK.setAppStartMeasurement(appStartMeasurement)
-                group.leave()
-            }
-        }
-
-        func createQueue() -> DispatchQueue {
-            return DispatchQueue(label: "SentrySDKTests", qos: .userInteractive, attributes: [.initiallyInactive])
-        }
-
-        let queue1 = createQueue()
-        let queue2 = createQueue()
-        let group = DispatchGroup()
-
-        let amount = 100
-
-        for i in 0...amount {
-            setAppStartMeasurement(queue1, i)
-            setAppStartMeasurement(queue2, i)
-        }
-
-        queue1.activate()
-        queue2.activate()
-        group.waitWithTimeout(timeout: 100)
-
-        let timestamp = SentryDependencyContainer.sharedInstance().dateProvider.date().addingTimeInterval(TimeInterval(amount))
-        XCTAssertEqual(timestamp, SentrySDK.getAppStartMeasurement()?.appStartTimestamp)
-    }
-
-    func testMovesBreadcrumbsToPreviousBreadcrumbs() {
-        let options = Options()
-        options.dsn = SentrySDKTests.dsnAsString
-
-        let fileManager = try! TestFileManager(options: options)
-        let observer = SentryWatchdogTerminationScopeObserver(maxBreadcrumbs: 10, fileManager: fileManager)
-        let serializedBreadcrumb = TestData.crumb.serialize()
-
-        for _ in 0..<3 {
-            observer.addSerializedBreadcrumb(serializedBreadcrumb)
-        }
-
-        SentrySDK.start(options: options)
-
-        let result = fileManager.readPreviousBreadcrumbs()
-        XCTAssertEqual(result.count, 3)
-    }
-
-#endif // SENTRY_HAS_UIKIT
 }
 
-private extension SentrySDKTests {
-    func givenSdkWithHub() {
-        SentrySDK.setCurrentHub(fixture.hub)
-        SentrySDK.setStart(fixture.options)
-    }
-    
-    func givenSdkWithHubButNoClient() {
-        SentrySDK.setCurrentHub(SentryHub(client: nil, andScope: nil))
-        SentrySDK.setStart(fixture.options)
-    }
-    
-    func assertIntegrationsInstalled(integrations: [String]) {
-        XCTAssertEqual(integrations.count, SentrySDK.currentHub().installedIntegrations().count)
-        integrations.forEach { integration in
-            if let integrationClass = NSClassFromString(integration) {
-                XCTAssertTrue(SentrySDK.currentHub().isIntegrationInstalled(integrationClass), "\(integration) not installed")
-            } else {
-                XCTFail("Integration \(integration) not installed.")
-            }
-        }
-    }
-    
-    func assertEventCaptured(expectedScope: Scope) {
+extension SentrySDKTests {
+    private func assertEventCaptured(expectedScope: Scope) {
         let client = fixture.client
         XCTAssertEqual(1, client.captureEventWithScopeInvocations.count)
         XCTAssertEqual(fixture.event, client.captureEventWithScopeInvocations.first?.event)
         XCTAssertEqual(expectedScope, client.captureEventWithScopeInvocations.first?.scope)
     }
     
-    func assertErrorCaptured(expectedScope: Scope) {
+    private func assertErrorCaptured(expectedScope: Scope) {
         let client = fixture.client
         XCTAssertEqual(1, client.captureErrorWithScopeInvocations.count)
         XCTAssertEqual(fixture.error.localizedDescription, client.captureErrorWithScopeInvocations.first?.error.localizedDescription)
         XCTAssertEqual(expectedScope, client.captureErrorWithScopeInvocations.first?.scope)
     }
     
-    func assertExceptionCaptured(expectedScope: Scope) {
+    private func assertExceptionCaptured(expectedScope: Scope) {
         let client = fixture.client
         XCTAssertEqual(1, client.captureExceptionWithScopeInvocations.count)
         XCTAssertEqual(fixture.exception, client.captureExceptionWithScopeInvocations.first?.exception)
         XCTAssertEqual(expectedScope, client.captureExceptionWithScopeInvocations.first?.scope)
     }
     
-    func assertMessageCaptured(expectedScope: Scope) {
+    private func assertMessageCaptured(expectedScope: Scope) {
         let client = fixture.client
         XCTAssertEqual(1, client.captureMessageWithScopeInvocations.count)
         XCTAssertEqual(fixture.message, client.captureMessageWithScopeInvocations.first?.message)
         XCTAssertEqual(expectedScope, client.captureMessageWithScopeInvocations.first?.scope)
     }
     
-    func assertHubScopeNotChanged() {
-        let hubScope = SentrySDK.currentHub().scope
+    private func assertHubScopeNotChanged() {
+        let hubScope = SentrySDKInternal.currentHub().scope
         XCTAssertEqual(fixture.scope, hubScope)
     }
     
-    func advanceTime(bySeconds: TimeInterval) {
-        fixture.currentDate.setDate(date: SentryDependencyContainer.sharedInstance().dateProvider.date().addingTimeInterval(bySeconds))
-    }
-    
-    func startprocessInfoWrapperForPreview() {
-        let testProcessInfoWrapper = TestSentryNSProcessInfoWrapper()
+    private func startprocessInfoWrapperForPreview() {
+        let testProcessInfoWrapper = MockSentryProcessInfo()
         testProcessInfoWrapper.overrides.environment = ["XCODE_RUNNING_FOR_PREVIEWS": "1"]
         SentryDependencyContainer.sharedInstance().processInfoWrapper = testProcessInfoWrapper
     }
-}
-
-/// Tests in this class aren't part of SentrySDKTests because we need would need to undo a bunch of operations 
-/// that are done in the setup.
-class SentrySDKWithSetupTests: XCTestCase {
     
-    func testAccessingHubAndOptions_NoDeadlock() {
-        SentryLog.withoutLogs {
-            
-            let concurrentQueue = DispatchQueue(label: "concurrent", attributes: .concurrent)
-            
-            let expectation = expectation(description: "no deadlock")
-            expectation.expectedFulfillmentCount = 20
-            
-            SentrySDK.setStart(Options())
-            
-            for _ in 0..<10 {
-                concurrentQueue.async {
-                    SentrySDK.currentHub().capture(message: "mess")
-                    SentrySDK.setCurrentHub(nil)
-                    
-                    expectation.fulfill()
-                }
-                
-                concurrentQueue.async {
-                    let hub = SentryHub(client: nil, andScope: nil)
-                    XCTAssertNotNil(hub)
-                    
-                    expectation.fulfill()
-                }
+    private func assertIntegrationsInstalled(integrations: [String]) {
+        XCTAssertEqual(integrations.count, SentrySDKInternal.currentHub().installedIntegrations().count)
+        integrations.forEach { integration in
+            if let integrationClass = NSClassFromString(integration) {
+                XCTAssertTrue(SentrySDKInternal.currentHub().isIntegrationInstalled(integrationClass), "\(integration) not installed")
+            } else {
+                XCTFail("Integration \(integration) not installed.")
             }
-            
-            wait(for: [expectation], timeout: 5.0)
         }
     }
-}
 
-public class MainThreadTestIntegration: NSObject, SentryIntegrationProtocol {
-    
-    static var expectation: XCTestExpectation?
-
-    public var installedInTheMainThread = false
-
-    public func install(with options: Options) -> Bool {
-        print("[Sentry] [TEST] [\(#file):\(#line) starting install.")
-        installedInTheMainThread = Thread.isMainThread
-        MainThreadTestIntegration.expectation?.fulfill()
-        MainThreadTestIntegration.expectation = nil
-        return true
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
+    private func givenSdkWithHubButNoClient() {
+        SentrySDKInternal.setCurrentHub(SentryHub(client: nil, andScope: nil))
+        SentrySDKInternal.setStart(with: fixture.options)
     }
-    
-    public func uninstall() {
+
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
+    private func givenSdkWithHub() {
+        SentrySDKInternal.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setStart(with: fixture.options)
     }
 }
-// swiftlint:enable file_length

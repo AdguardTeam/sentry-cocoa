@@ -1,5 +1,5 @@
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 // swiftlint:disable file_length
@@ -17,7 +17,7 @@ class SentryHubTests: XCTestCase {
         let message = "some message"
         let event: Event
         let currentDateProvider = TestCurrentDateProvider()
-        let sentryCrashWrapper = TestSentryCrashWrapper.sharedInstance()
+        let sentryCrashWrapper = TestSentryCrashWrapper(processInfoWrapper: ProcessInfo.processInfo)
         let fileManager: SentryFileManager
         let crashedSession: SentrySession
         let abnormalSession: SentrySession
@@ -37,11 +37,15 @@ class SentryHubTests: XCTestCase {
             event = Event()
             event.message = SentryMessage(formatted: message)
             
-            fileManager = try! SentryFileManager(options: options, dispatchQueueWrapper: TestSentryDispatchQueueWrapper())
-            
+            fileManager = try! TestFileManager(
+                options: options,
+                dateProvider: currentDateProvider,
+                dispatchQueueWrapper: TestSentryDispatchQueueWrapper()
+            )
+
             SentryDependencyContainer.sharedInstance().dateProvider = currentDateProvider
             SentryDependencyContainer.sharedInstance().random = random
-            
+
             crashedSession = SentrySession(releaseName: "1.0.0", distinctId: "")
             crashedSession.endCrashed(withTimestamp: currentDateProvider.date())
             crashedSession.environment = options.environment
@@ -60,6 +64,19 @@ class SentryHubTests: XCTestCase {
             let hub = SentryHub(client: client, andScope: scope, andCrashWrapper: sentryCrashWrapper, andDispatchQueue: dispatchQueueWrapper)
             hub.bindClient(client)
             return hub
+        }
+    }
+
+    private class TestSessionListener: NSObject, SentrySessionListener {
+        let startedSessions = Invocations<SentrySession>()
+        let endedSessions = Invocations<SentrySession>()
+
+        func sentrySessionStarted(_ session: SentrySession) {
+            startedSessions.record(session)
+        }
+
+        func sentrySessionEnded(_ session: SentrySession) {
+            endedSessions.record(session)
         }
     }
     
@@ -149,9 +166,6 @@ class SentryHubTests: XCTestCase {
     }
     
     func testBreadcrumbCapLimit() {
-        // To avoid spamming the test logs
-        SentryLog.configure(true, diagnosticLevel: .error)
-        
         let hub = fixture.getSut()
         
         for _ in 0...100 {
@@ -159,8 +173,6 @@ class SentryHubTests: XCTestCase {
         }
         
         assert(withScopeBreadcrumbsCount: 100, with: hub)
-        
-        SentryLog.setTestDefaultLogLevel()
     }
     
     func testBreadcrumbOverDefaultLimit() {
@@ -192,7 +204,56 @@ class SentryHubTests: XCTestCase {
         XCTAssertNotNil(hub.scope.contextDictionary["device"])
         XCTAssertNotNil(hub.scope.contextDictionary["app"])
     }
-    
+
+    func testScopeEnriched_WithNoRuntime() throws {
+        // Arrange
+        let processInfoWrapper = MockSentryProcessInfo()
+        processInfoWrapper.overrides.isiOSAppOnMac = false
+        processInfoWrapper.overrides.isMacCatalystApp = false
+        let crashWrapper = SentryCrashWrapper(processInfoWrapper: processInfoWrapper)
+        
+        // Act
+        let hub = SentryHub(client: nil, andScope: Scope(), andCrashWrapper: crashWrapper, andDispatchQueue: TestSentryDispatchQueueWrapper())
+
+        // Assert
+        XCTAssertNil(hub.scope.contextDictionary["runtime"])
+    }
+
+    func testScopeEnriched_WithRuntime_isiOSAppOnMac() throws {
+        // Arrange
+        let processInfoWrapper = MockSentryProcessInfo()
+        processInfoWrapper.overrides.isiOSAppOnMac = true
+        processInfoWrapper.overrides.isMacCatalystApp = false
+        SentryDependencyContainer.sharedInstance().processInfoWrapper = processInfoWrapper
+        let crashWrapper = SentryCrashWrapper(processInfoWrapper: processInfoWrapper)
+        
+        // Act
+        let hub = SentryHub(client: nil, andScope: Scope(), andCrashWrapper: crashWrapper, andDispatchQueue: TestSentryDispatchQueueWrapper())
+        
+        // Assert
+        let runtimeContext = try XCTUnwrap (hub.scope.contextDictionary["runtime"] as? [String: String])
+        
+        XCTAssertEqual(runtimeContext["name"], "iOS App on Mac")
+        XCTAssertEqual(runtimeContext["raw_description"], "ios-app-on-mac")
+    }
+
+    func testScopeEnriched_WithRuntime_isMacCatalystApp() throws {
+        // Arrange
+        let processInfoWrapper = MockSentryProcessInfo()
+        processInfoWrapper.overrides.isiOSAppOnMac = false
+        processInfoWrapper.overrides.isMacCatalystApp = true
+        SentryDependencyContainer.sharedInstance().processInfoWrapper = processInfoWrapper
+        let crashWrapper = SentryCrashWrapper(processInfoWrapper: processInfoWrapper)
+        
+        // Act
+        let hub = SentryHub(client: nil, andScope: Scope(), andCrashWrapper: crashWrapper, andDispatchQueue: TestSentryDispatchQueueWrapper())
+
+        // Assert
+        let runtimeContext = try XCTUnwrap (hub.scope.contextDictionary["runtime"] as? [String: String])
+        XCTAssertEqual(runtimeContext["name"], "Mac Catalyst App")
+        XCTAssertEqual(runtimeContext["raw_description"], "raw_description")
+    }
+
     func testScopeNotEnriched_WhenScopeIsNil() {
         _ = fixture.getSut()
      
@@ -227,7 +288,11 @@ class SentryHubTests: XCTestCase {
     }
     
     func testAddUserToTheScope() throws {
-        let client = SentryClient(options: fixture.options, fileManager: try TestFileManager(options: fixture.options), deleteOldEnvelopeItems: false)
+        let client = SentryClient(
+            options: fixture.options,
+            fileManager: fixture.fileManager,
+            deleteOldEnvelopeItems: false
+        )
         let hub = SentryHub(client: client, andScope: Scope())
         
         let user = User()
@@ -816,6 +881,38 @@ class SentryHubTests: XCTestCase {
             )
         }
     }
+
+    func testStartSession_NotifiesSessionListenerOnMainQueue() {
+        let listener = TestSessionListener()
+        sut.register(listener)
+        fixture.dispatchQueueWrapper.blockBeforeMainBlock = { false }
+
+        sut.startSession()
+
+        XCTAssertEqual(1, fixture.dispatchQueueWrapper.blockOnMainInvocations.count)
+        XCTAssertEqual(0, listener.startedSessions.count)
+
+        fixture.dispatchQueueWrapper.blockOnMainInvocations.last?()
+
+        XCTAssertEqual(1, listener.startedSessions.count)
+    }
+
+    func testEndSession_NotifiesSessionListenerOnMainQueue() {
+        sut.startSession()
+
+        let listener = TestSessionListener()
+        sut.register(listener)
+        fixture.dispatchQueueWrapper.blockBeforeMainBlock = { false }
+
+        sut.endSession()
+
+        XCTAssertEqual(1, fixture.dispatchQueueWrapper.blockOnMainInvocations.count)
+        XCTAssertEqual(0, listener.endedSessions.count)
+
+        fixture.dispatchQueueWrapper.blockOnMainInvocations.last?()
+
+        XCTAssertEqual(1, listener.endedSessions.count)
+    }
     
     func testCaptureClientIsNil_ReturnsEmptySentryId() {
         sut.bindClient(nil)
@@ -833,7 +930,7 @@ class SentryHubTests: XCTestCase {
         XCTAssertEqual(0, fixture.client.captureExceptionWithScopeInvocations.count)
     }
     
-    func testCaptureCrashEvent_CrashedSessionExists() {
+    func testCaptureFatalEvent_CrashedSessionExists() {
         sut = fixture.getSut(fixture.options, fixture.scope)
         givenCrashedSession()
         
@@ -841,15 +938,15 @@ class SentryHubTests: XCTestCase {
         
         let environment = "test"
         sut.configureScope { $0.setEnvironment(environment) }
-        sut.captureCrash(fixture.event)
+        sut.captureFatalEvent(fixture.event)
         assertEventSentWithSession(scopeEnvironment: environment)
         
         // Make sure further crash events are sent
-        sut.captureCrash(fixture.event)
-        assertCrashEventSent()
+        sut.captureFatalEvent(fixture.event)
+        assertFatalEventSent()
     }
     
-    func testCaptureCrashEvent_ManualSessionTracking_CrashedSessionExists() {
+    func testCaptureFatalEvent_ManualSessionTracking_CrashedSessionExists() {
         givenAutoSessionTrackingDisabled()
         
         givenCrashedSession()
@@ -858,51 +955,51 @@ class SentryHubTests: XCTestCase {
         
         let environment = "test"
         sut.configureScope { $0.setEnvironment(environment) }
-        sut.captureCrash(fixture.event)
+        sut.captureFatalEvent(fixture.event)
         
         assertEventSentWithSession(scopeEnvironment: environment)
         
         // Make sure further crash events are sent
-        sut.captureCrash(fixture.event)
-        assertCrashEventSent()
+        sut.captureFatalEvent(fixture.event)
+        assertFatalEventSent()
     }
     
-    func testCaptureCrashEvent_CrashedSessionDoesNotExist() {
+    func testCaptureFatalEvent_CrashedSessionDoesNotExist() {
         sut.startSession() // there is already an existing session
-        sut.captureCrash(fixture.event)
+        sut.captureFatalEvent(fixture.event)
         
         assertNoCrashedSessionSent()
-        assertCrashEventSent()
+        assertFatalEventSent()
     }
     
     /**
      * When autoSessionTracking is just enabled and there is a previous crash on the disk there is no session on the disk.
      */
-    func testCaptureCrashEvent_CrashExistsButNoSessionExists() {
-        sut.captureCrash(fixture.event)
+    func testCaptureFatalEvent_CrashExistsButNoSessionExists() {
+        sut.captureFatalEvent(fixture.event)
         
-        assertCrashEventSent()
+        assertFatalEventSent()
     }
     
-    func testCaptureCrashEvent_WithoutExistingSessionAndAutoSessionTrackingEnabled() {
+    func testCaptureFatalEvent_WithoutExistingSessionAndAutoSessionTrackingEnabled() {
         givenAutoSessionTrackingDisabled()
         
-        sut.captureCrash(fixture.event)
+        sut.captureFatalEvent(fixture.event)
         
-        assertCrashEventSent()
+        assertFatalEventSent()
     }
     
-    func testCaptureCrashEvent_ClientIsNil() {
+    func testCaptureFatalEvent_ClientIsNil() {
         sut = fixture.getSut()
         sut.bindClient(nil)
         
         givenCrashedSession()
-        sut.captureCrash(fixture.event)
+        sut.captureFatalEvent(fixture.event)
         
         assertNoEventsSent()
     }
     
-    func testCaptureCrashEvent_ClientHasNoReleaseName() {
+    func testCaptureFatalEvent_ClientHasNoReleaseName() {
         sut = fixture.getSut()
         let options = fixture.options
         options.releaseName = nil
@@ -910,7 +1007,7 @@ class SentryHubTests: XCTestCase {
         sut.bindClient(client)
         
         givenCrashedSession()
-        sut.captureCrash(fixture.event)
+        sut.captureFatalEvent(fixture.event)
         
         assertNoEventsSent()
     }
@@ -958,7 +1055,7 @@ class SentryHubTests: XCTestCase {
         
         // Assert
         assertNoAbnormalSessionSent()
-        assertCrashEventSent()
+        assertFatalEventSent()
     }
     
     /**
@@ -969,7 +1066,7 @@ class SentryHubTests: XCTestCase {
         sut.captureFatalAppHang(fixture.event)
         
         // Assert
-        assertCrashEventSent()
+        assertFatalEventSent()
     }
     
     func testCaptureFatalAppHangEvent_WithoutExistingSessionAndAutoSessionTrackingEnabled() {
@@ -980,7 +1077,7 @@ class SentryHubTests: XCTestCase {
         sut.captureFatalAppHang(fixture.event)
         
         // Assert
-        assertCrashEventSent()
+        assertFatalEventSent()
     }
     
     func testCaptureFatalAppHangEvent_ClientIsNil() {
@@ -1013,6 +1110,7 @@ class SentryHubTests: XCTestCase {
     }
 #endif // os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithEventWithError() throws {
         sut.startSession()
         
@@ -1021,6 +1119,7 @@ class SentryHubTests: XCTestCase {
         try assertSessionWithIncrementedErrorCountedAdded()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithEventWithoutExceptionMechanism() throws {
         sut.startSession()
         
@@ -1029,6 +1128,7 @@ class SentryHubTests: XCTestCase {
         try assertSessionWithIncrementedErrorCountedAdded()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithEventWithFatal() throws {
         sut.startSession()
         
@@ -1037,6 +1137,7 @@ class SentryHubTests: XCTestCase {
         try assertSessionWithIncrementedErrorCountedAdded()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithEventWithNoLevel() throws {
         sut.startSession()
         
@@ -1048,6 +1149,7 @@ class SentryHubTests: XCTestCase {
         try assertSessionWithIncrementedErrorCountedAdded()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithEventWithGarbageLevel() throws {
         sut.startSession()
         
@@ -1059,12 +1161,14 @@ class SentryHubTests: XCTestCase {
         try assertSessionWithIncrementedErrorCountedAdded()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithEventWithFatal_SessionNotStarted() {
         captureEventEnvelope(level: SentryLevel.fatal)
         
         assertNoSessionAddedToCapturedEnvelope()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithEventWithWarning() {
         sut.startSession()
         
@@ -1073,6 +1177,7 @@ class SentryHubTests: XCTestCase {
         assertNoSessionAddedToCapturedEnvelope()
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithClientNil() {
         sut.bindClient(nil)
         captureEventEnvelope(level: SentryLevel.warning)
@@ -1108,6 +1213,7 @@ class SentryHubTests: XCTestCase {
         XCTAssertEqual(mockClient?.scope, sut.scope)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithSession() {
         let envelope = SentryEnvelope(session: SentrySession(releaseName: "", distinctId: ""))
         sut.capture(envelope)
@@ -1116,6 +1222,7 @@ class SentryHubTests: XCTestCase {
         XCTAssertEqual(envelope, fixture.client.captureEnvelopeInvocations.first)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithUnhandledException() throws {
         sut.startSession()
         
@@ -1131,12 +1238,13 @@ class SentryHubTests: XCTestCase {
         let envelope = fixture.client.captureEnvelopeInvocations.first
         let sessionEnvelopeItem = envelope?.items.first(where: { $0.header.type == "session" })
         
-        let json = try XCTUnwrap((try! JSONSerialization.jsonObject(with: sessionEnvelopeItem!.data)) as? [String: Any])
+        let json = try XCTUnwrap((try! JSONSerialization.jsonObject(with: XCTUnwrap(sessionEnvelopeItem?.data))) as? [String: Any])
         
         XCTAssertEqual(json["timestamp"] as? String, "1970-01-01T00:00:02.000Z")
         XCTAssertEqual(json["status"] as? String, "crashed")
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testCaptureEnvelope_WithHandledException() {
         sut.startSession()
         
@@ -1154,26 +1262,34 @@ class SentryHubTests: XCTestCase {
     
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
     func test_reportFullyDisplayed_enableTimeToFullDisplay_YES() {
+        // -- Arrange --
         let sut = fixture.getSut(fixture.options)
         
         let testTTDTracker = TestTimeToDisplayTracker(waitForFullDisplay: true)
         
-        Dynamic(SentryUIViewControllerPerformanceTracker.shared).currentTTDTracker = testTTDTracker
-        
+        let performanceTracker = Dynamic(SentryDependencyContainer.sharedInstance().uiViewControllerPerformanceTracker)
+        performanceTracker.currentTTDTracker = testTTDTracker
+
+        // -- Act --
         sut.reportFullyDisplayed()
         
+        // -- Assert --
         XCTAssertTrue(testTTDTracker.registerFullDisplayCalled)
     }
     
     func test_reportFullyDisplayed_enableTimeToFullDisplay_NO() {
+        // -- Arrange --
         let sut = fixture.getSut(fixture.options)
         
         let testTTDTracker = TestTimeToDisplayTracker(waitForFullDisplay: false)
         
-        Dynamic(SentryUIViewControllerPerformanceTracker.shared).currentTTDTracker = testTTDTracker
+        let performanceTracker = Dynamic(SentryDependencyContainer.sharedInstance().uiViewControllerPerformanceTracker)
+        performanceTracker.currentTTDTracker = testTTDTracker
         
+        // -- Act --
         sut.reportFullyDisplayed()
         
+        // -- Assert --
         XCTAssertFalse(testTTDTracker.registerFullDisplayCalled)
     }
 #endif
@@ -1203,16 +1319,19 @@ class SentryHubTests: XCTestCase {
         sut.startSession()
         
         let queue = fixture.queue
-        let group = DispatchGroup()
+
+        let expectation = XCTestExpectation(description: "Capture should be called \(count) times")
+        expectation.expectedFulfillmentCount = count
+
         for _ in 0..<count {
-            group.enter()
+
             queue.async {
                 capture(sut)
-                group.leave()
+                expectation.fulfill()
             }
         }
-        
-        group.waitWithTimeout()
+
+        wait(for: [expectation], timeout: 5.0)
     }
     
     func testModifyIntegrationsConcurrently() {
@@ -1223,10 +1342,11 @@ class SentryHubTests: XCTestCase {
         let innerLoopAmount = 100
         
         let queue = fixture.queue
-        let group = DispatchGroup()
-        
+
+        let expectation = XCTestExpectation(description: "Installing integrations concurrently")
+        expectation.expectedFulfillmentCount = outerLoopAmount
+
         for i in 0..<outerLoopAmount {
-            group.enter()
             queue.async {
                 for j in 0..<innerLoopAmount {
                     let integrationName = "Integration\(i)\(j)"
@@ -1234,12 +1354,12 @@ class SentryHubTests: XCTestCase {
                     XCTAssertTrue(sut.hasIntegration(integrationName))
                     XCTAssertNotNil(sut.getInstalledIntegration(EmptyIntegration.self))
                 }
-                group.leave()
+                expectation.fulfill()
             }
         }
-        
-        group.waitWithTimeout()
-        
+
+        wait(for: [expectation], timeout: 5.0)
+
         XCTAssertEqual(innerLoopAmount * outerLoopAmount, sut.installedIntegrations().count)
         XCTAssertEqual(innerLoopAmount * outerLoopAmount, sut.installedIntegrationNames().count)
         
@@ -1252,10 +1372,13 @@ class SentryHubTests: XCTestCase {
         let sut = fixture.getSut()
         
         let queue = fixture.queue
-        let group = DispatchGroup()
-        
-        for i in 0..<1_000 {
-            group.enter()
+
+        let loopCount = 1_000
+        let expectation = XCTestExpectation(description: "Installing integrations concurrently")
+        expectation.expectedFulfillmentCount = loopCount
+
+        for i in 0..<loopCount {
+
             queue.async {
                 for j in 0..<10 {
                     let integrationName = "Integration\(i)\(j)"
@@ -1271,11 +1394,11 @@ class SentryHubTests: XCTestCase {
                 sut.installedIntegrationNames().forEach { XCTAssertNotNil($0) }
                 sut.removeAllIntegrations()
                 
-                group.leave()
+                expectation.fulfill()
             }
         }
         
-        group.wait()
+        wait(for: [expectation], timeout: 5.0)
     }
     
     func testGetInstalledIntegration() {
@@ -1324,12 +1447,14 @@ class SentryHubTests: XCTestCase {
                                                          ]))
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     private func captureEventEnvelope(level: SentryLevel) {
         let event = TestData.event
         event.level = level
         sut.capture(SentryEnvelope(event: event))
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     private func captureFatalEventWithoutExceptionMechanism() throws {
         let event = TestData.event
         event.level = SentryLevel.fatal
@@ -1356,10 +1481,11 @@ class SentryHubTests: XCTestCase {
         sut = fixture.getSut(options)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     private func givenEnvelopeWithModifiedEvent(modifyEventDict: (inout [String: Any]) -> Void) throws -> SentryEnvelope {
         let event = TestData.event
         let envelopeItem = SentryEnvelopeItem(event: event)
-        var eventDict = try XCTUnwrap(JSONSerialization.jsonObject(with: envelopeItem.data) as? [String: Any])
+        var eventDict = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(envelopeItem.data)) as? [String: Any])
         
         modifyEventDict(&eventDict)
         
@@ -1395,8 +1521,8 @@ class SentryHubTests: XCTestCase {
     
     private func assertNoEventsSent() {
         XCTAssertEqual(0, fixture.client.captureEventInvocations.count)
-        XCTAssertEqual(0, fixture.client.captureCrashEventWithSessionInvocations.count)
-        XCTAssertEqual(0, fixture.client.captureCrashEventInvocations.count)
+        XCTAssertEqual(0, fixture.client.captureFatalEventWithSessionInvocations.count)
+        XCTAssertEqual(0, fixture.client.captureFatalEventInvocations.count)
     }
     
     private func assertEventSent() {
@@ -1406,15 +1532,15 @@ class SentryHubTests: XCTestCase {
         XCTAssertFalse(arguments.first?.event.isFatalEvent ?? true)
     }
     
-    private func assertCrashEventSent() {
-        let arguments = fixture.client.captureCrashEventInvocations
+    private func assertFatalEventSent() {
+        let arguments = fixture.client.captureFatalEventInvocations
         XCTAssertEqual(1, arguments.count)
         XCTAssertEqual(fixture.event, arguments.first?.event)
         XCTAssertTrue(arguments.first?.event.isFatalEvent ?? false)
     }
     
     private func assertEventSentWithSession(scopeEnvironment: String, sessionStatus: SentrySessionStatus = .crashed, abnormalMechanism: String? = nil) {
-        let arguments = fixture.client.captureCrashEventWithSessionInvocations
+        let arguments = fixture.client.captureFatalEventWithSessionInvocations
         XCTAssertEqual(1, arguments.count)
         
         let argument = arguments.first
@@ -1431,7 +1557,7 @@ class SentryHubTests: XCTestCase {
         XCTAssertEqual(1, fixture.client.captureEnvelopeInvocations.count)
         let envelope = fixture.client.captureEnvelopeInvocations.first!
         XCTAssertEqual(2, envelope.items.count)
-        let session = SentrySerialization.session(with: try XCTUnwrap(envelope.items.element(at: 1)).data)
+        let session = SentrySerializationSwift.session(with: try XCTUnwrap(XCTUnwrap(envelope.items.element(at: 1)).data))
         XCTAssertEqual(1, session?.errors)
     }
     

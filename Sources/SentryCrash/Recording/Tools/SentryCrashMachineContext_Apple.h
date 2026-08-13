@@ -54,8 +54,6 @@ typedef struct SentryCrashMachineContext {
     STRUCT_MCONTEXT_L machineContext;
 } SentryCrashMachineContext;
 
-#define sentrycrashmc_contextSize sizeof(SentryCrashMachineContext)
-
 #ifdef __cplusplus
 }
 #endif

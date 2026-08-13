@@ -1,4 +1,5 @@
-import SentryTestUtils
+@_spi(Private) import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 class SentryPerformanceTrackerTests: XCTestCase {
@@ -31,7 +32,7 @@ class SentryPerformanceTrackerTests: XCTestCase {
         super.setUp()
         
         fixture = Fixture()
-        SentrySDK.setCurrentHub(fixture.hub)
+        SentrySDKInternal.setCurrentHub(fixture.hub)
     }
     
     override func tearDown() {
@@ -61,7 +62,7 @@ class SentryPerformanceTrackerTests: XCTestCase {
         let spanId = startSpan(tracker: sut)
                 
         let transaction = sut.getSpan(spanId)
-        let scopeSpan = SentrySDK.currentHub().scope.span
+        let scopeSpan = SentrySDKInternal.currentHub().scope.span
         
         XCTAssert(scopeSpan !== transaction)
         XCTAssert(scopeSpan === firstTransaction)
@@ -74,7 +75,7 @@ class SentryPerformanceTrackerTests: XCTestCase {
         let spanId = startSpan(tracker: sut)
                 
         let transaction = sut.getSpan(spanId)
-        let scopeSpan = SentrySDK.currentHub().scope.span
+        let scopeSpan = SentrySDKInternal.currentHub().scope.span
         
         XCTAssert(scopeSpan === transaction)
         XCTAssert(scopeSpan !== firstTransaction)
@@ -281,34 +282,32 @@ class SentryPerformanceTrackerTests: XCTestCase {
     }
         
     func testStartSpanAsync() {
-        // To not spam the test logs
-        SentryLog.configureLog(true, diagnosticLevel: .error)
-        
         let sut = fixture.getSut()
         let spanId = startSpan(tracker: sut)
         sut.activateSpan(spanId) {
             
             let queue = DispatchQueue(label: "SentryPerformanceTrackerTests", attributes: [.concurrent, .initiallyInactive])
-            let group = DispatchGroup()
 
-            for _ in 0 ..< 5_000 {
-                group.enter()
+            let loopCount = 5_000
+            let expectation = self.expectation(description: "Start spans in parallel")
+            expectation.expectedFulfillmentCount = loopCount
+            expectation.assertForOverFulfill = true
+
+            for _ in 0 ..< loopCount {
                 queue.async {
                     _ = self.startSpan(tracker: sut)
-                    group.leave()
+                    expectation.fulfill()
                 }
             }
             
             queue.activate()
-            group.wait()
+            self.wait(for: [expectation], timeout: 10.0)
         }
         let spans = getSpans(tracker: sut)
         XCTAssertEqual(spans.count, 5_001)
         for span in spans {
             sut.finishSpan(span.key)
         }
-        
-        SentryLog.setTestDefaultLogLevel()
     }
     
     func testStackAsync() {
@@ -317,20 +316,23 @@ class SentryPerformanceTrackerTests: XCTestCase {
         sut.activateSpan(spanId) {
             
             let queue = DispatchQueue(label: "SentryPerformanceTrackerTests", attributes: [.concurrent, .initiallyInactive])
-            let group = DispatchGroup()
-            
-            for _ in 0 ..< 50 {
-                group.enter()
+
+            let loopCount = 50
+            let expectation = self.expectation(description: "Create child spans in parallel")
+            expectation.expectedFulfillmentCount = loopCount
+            expectation.assertForOverFulfill = true
+
+            for _ in 0 ..< loopCount {
                 queue.async {
                     let childId = self.startSpan(tracker: sut)
                     sut.activateSpan(childId) {
                     }
-                    group.leave()
+                    expectation.fulfill()
                 }
             }
             
             queue.activate()
-            group.wait()
+            self.wait(for: [expectation], timeout: 10.0)
         }
         
         let stack = getStack(tracker: sut)

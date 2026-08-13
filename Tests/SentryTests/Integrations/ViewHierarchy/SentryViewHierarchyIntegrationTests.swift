@@ -1,18 +1,19 @@
 #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
 
-import Sentry
+@_spi(Private) import Sentry
+@_spi(Private) import SentryTestUtils
 import SentryTestUtils
 import XCTest
 
 class SentryViewHierarchyIntegrationTests: XCTestCase {
 
     private class Fixture {
-        let viewHierarchy: TestSentryViewHierarchy
+        let viewHierarchyProvider: TestSentryViewHierarchyProvider
 
         init() {
-            let testViewHierarchy = TestSentryViewHierarchy()
-            testViewHierarchy.result = "view hierarchy".data(using: .utf8) ?? Data()
-            viewHierarchy = testViewHierarchy
+            let testViewHierarchy = TestSentryViewHierarchyProvider(dispatchQueueWrapper: TestSentryDispatchQueueWrapper(), applicationProvider: { TestSentryUIApplication() })
+            testViewHierarchy.result = Data("view hierarchy".utf8)
+            viewHierarchyProvider = testViewHierarchy
         }
 
         func getSut() -> SentryViewHierarchyIntegration {
@@ -27,7 +28,7 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
         super.setUp()
         fixture = Fixture()
 
-        SentryDependencyContainer.sharedInstance().viewHierarchy = fixture.viewHierarchy
+        SentryDependencyContainer.sharedInstance().viewHierarchyProvider = fixture.viewHierarchyProvider
     }
 
     override func tearDown() {
@@ -35,41 +36,45 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
         clearTestState()
     }
 
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func test_attachViewHierarchy() {
         SentrySDK.start {
             $0.attachViewHierarchy = false
             $0.setIntegrations([SentryViewHierarchyIntegration.self])
         }
-        XCTAssertEqual(SentrySDK.currentHub().getClient()?.attachmentProcessors.count, 0)
+        XCTAssertEqual(SentrySDKInternal.currentHub().getClient()?.attachmentProcessors.count, 0)
         XCTAssertFalse(sentrycrash_hasSaveViewHierarchyCallback())
     }
 
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func test_attachViewHierarchy_enabled() {
         SentrySDK.start {
             $0.attachViewHierarchy = true
             $0.setIntegrations([SentryViewHierarchyIntegration.self])
         }
-        XCTAssertEqual(SentrySDK.currentHub().getClient()?.attachmentProcessors.count, 1)
+        XCTAssertEqual(SentrySDKInternal.currentHub().getClient()?.attachmentProcessors.count, 1)
         XCTAssertTrue(sentrycrash_hasSaveViewHierarchyCallback())
     }
 
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func test_uninstall() {
         SentrySDK.start {
             $0.attachViewHierarchy = true
             $0.setIntegrations([SentryViewHierarchyIntegration.self])
         }
         SentrySDK.close()
-        XCTAssertNil(SentrySDK.currentHub().getClient()?.attachmentProcessors)
+        XCTAssertNil(SentrySDKInternal.currentHub().getClient()?.attachmentProcessors)
         XCTAssertFalse(sentrycrash_hasSaveViewHierarchyCallback())
     }
 
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func test_integrationAddFileName() {
         SentrySDK.start {
             $0.attachViewHierarchy = true
             $0.setIntegrations([SentryViewHierarchyIntegration.self])
         }
         saveViewHierarchy("/test/path")
-        XCTAssertEqual("/test/path/view-hierarchy.json", fixture.viewHierarchy.saveFilePathUsed)
+        XCTAssertEqual("/test/path/view-hierarchy.json", fixture.viewHierarchyProvider.saveFilePathUsed)
     }
 
     func test_processAttachments() {
@@ -78,9 +83,9 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
 
         let newAttachmentList = sut.processAttachments([], for: event)
 
-        XCTAssertEqual(newAttachmentList?.first?.filename, "view-hierarchy.json")
-        XCTAssertEqual(newAttachmentList?.first?.contentType, "application/json")
-        XCTAssertEqual(newAttachmentList?.first?.attachmentType, .viewHierarchy)
+        XCTAssertEqual(newAttachmentList.first?.filename, "view-hierarchy.json")
+        XCTAssertEqual(newAttachmentList.first?.contentType, "application/json")
+        XCTAssertEqual(newAttachmentList.first?.attachmentType, .viewHierarchy)
     }
 
     func test_noViewHierarchy_attachment() {
@@ -89,17 +94,17 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
 
         let newAttachmentList = sut.processAttachments([], for: event)
 
-        XCTAssertEqual(newAttachmentList?.count, 0)
+        XCTAssertEqual(newAttachmentList.count, 0)
     }
 
-    func test_noViewHierarchy_CrashEvent() {
+    func test_noViewHierarchy_FatalEvent() {
         let sut = fixture.getSut()
         let event = Event(error: NSError(domain: "", code: -1))
         event.isFatalEvent = true
 
         let newAttachmentList = sut.processAttachments([], for: event)
 
-        XCTAssertEqual(newAttachmentList?.count, 0)
+        XCTAssertEqual(newAttachmentList.count, 0)
     }
 
 #if os(iOS) || targetEnvironment(macCatalyst)
@@ -108,7 +113,7 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
         
         let newAttachmentList = sut.processAttachments([], for: TestData.metricKitEvent)
 
-        XCTAssertEqual(newAttachmentList?.count, 0)
+        XCTAssertEqual(newAttachmentList.count, 0)
     }
 #endif // os(iOS) || targetEnvironment(macCatalyst)
     
@@ -130,7 +135,7 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
 
         wait(for: [expectation], timeout: 1.0)
 
-        XCTAssertEqual(newAttachmentList?.count, 0)
+        XCTAssertEqual(newAttachmentList.count, 0)
     }
 
     func test_noViewHierarchy_keepAttachment() {
@@ -141,21 +146,21 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
 
         let newAttachmentList = sut.processAttachments([attachment], for: event)
 
-        XCTAssertEqual(newAttachmentList?.count, 1)
-        XCTAssertEqual(newAttachmentList?.first, attachment)
+        XCTAssertEqual(newAttachmentList.count, 1)
+        XCTAssertEqual(newAttachmentList.first, attachment)
     }
     
     func test_backgroundForAppHangs() {
         let sut = fixture.getSut()
-        let testVH = TestSentryViewHierarchy()
-        SentryDependencyContainer.sharedInstance().viewHierarchy = testVH
-        
+        let testVH = TestSentryViewHierarchyProvider(dispatchQueueWrapper: TestSentryDispatchQueueWrapper(), applicationProvider: { TestSentryUIApplication() })
+        SentryDependencyContainer.sharedInstance().viewHierarchyProvider = testVH
+
         let event = Event()
         event.exceptions = [Sentry.Exception(value: "test", type: "App Hanging")]
         
         let ex = expectation(description: "Attachment Added")
         
-        testVH.processViewHierarchyCallback = {
+        testVH.appViewHierarchyCallback = {
             XCTFail("Should not add view hierarchy to app hanging events")
         }
         
@@ -168,21 +173,23 @@ class SentryViewHierarchyIntegrationTests: XCTestCase {
         wait(for: [ex], timeout: 1)
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testReportAccessibilityIdentifierTrue() {
         SentrySDK.start {
             $0.attachViewHierarchy = true
             $0.setIntegrations([SentryViewHierarchyIntegration.self])
         }
-        XCTAssertTrue(SentryDependencyContainer.sharedInstance().viewHierarchy.reportAccessibilityIdentifier)
+        XCTAssertTrue(SentryDependencyContainer.sharedInstance().viewHierarchyProvider.reportAccessibilityIdentifier)
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testReportAccessibilityIdentifierFalse() {
         SentrySDK.start {
             $0.attachViewHierarchy = true
             $0.reportAccessibilityIdentifier = false
             $0.setIntegrations([SentryViewHierarchyIntegration.self])
         }
-        XCTAssertFalse(SentryDependencyContainer.sharedInstance().viewHierarchy.reportAccessibilityIdentifier)
+        XCTAssertFalse(SentryDependencyContainer.sharedInstance().viewHierarchyProvider.reportAccessibilityIdentifier)
     }
 }
 

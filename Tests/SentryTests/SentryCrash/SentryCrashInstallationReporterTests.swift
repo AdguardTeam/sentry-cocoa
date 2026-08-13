@@ -1,5 +1,5 @@
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 class SentryCrashInstallationReporterTests: XCTestCase {
@@ -14,6 +14,7 @@ class SentryCrashInstallationReporterTests: XCTestCase {
         sut.uninstall()
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testReportIsSentAndDeleted() throws {
         givenSutWithStartedSDK()
         
@@ -23,13 +24,14 @@ class SentryCrashInstallationReporterTests: XCTestCase {
             XCTAssertEqual(filteredReports?.count, 1)
         }
         
-        XCTAssertEqual(self.testClient.captureCrashEventInvocations.count, 1)
+        XCTAssertEqual(self.testClient.captureFatalEventInvocations.count, 1)
         XCTAssertEqual(sentrycrash_getReportCount(), 0)
     }
     
     /**
      * Validates that handling a crash report with the removed fields total_storage and free_storage works.
      */
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testShouldCaptureCrashReportWithLegacyStorageInfo() throws {
         givenSutWithStartedSDK()
         
@@ -39,15 +41,16 @@ class SentryCrashInstallationReporterTests: XCTestCase {
             XCTAssertEqual(filteredReports?.count, 1)
         }
         
-        XCTAssertEqual(self.testClient.captureCrashEventInvocations.count, 1)
+        XCTAssertEqual(self.testClient.captureFatalEventInvocations.count, 1)
         XCTAssertEqual(sentrycrash_getReportCount(), 0)
         
-        let event = self.testClient.captureCrashEventInvocations.last?.event
+        let event = self.testClient.captureFatalEventInvocations.last?.event
         XCTAssertEqual(event?.context?["device"]?["free_storage"] as? Int, 278_914_420_736)
         // total_storage got converted to storage_size
         XCTAssertEqual(event?.context?["device"]?["storage_size"] as? Int, 994_662_584_320)
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testShouldCaptureCrashReportWithoutDeviceContext() throws {
         givenSutWithStartedSDK()
         
@@ -57,14 +60,15 @@ class SentryCrashInstallationReporterTests: XCTestCase {
             XCTAssertEqual(filteredReports?.count, 1)
         }
         
-        XCTAssertEqual(self.testClient.captureCrashEventInvocations.count, 1)
+        XCTAssertEqual(self.testClient.captureFatalEventInvocations.count, 1)
         XCTAssertEqual(sentrycrash_getReportCount(), 0)
         
-        let event = self.testClient.captureCrashEventInvocations.last?.event
+        let event = self.testClient.captureFatalEventInvocations.last?.event
         XCTAssertNil(event?.context?["device"])
         XCTAssertEqual(event?.context?["app"]?["app_name"] as? String, "iOS-Swift")
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     func testFaultyReportIsNotSentAndDeleted() throws {
         givenSutWithStartedSDK()
         
@@ -74,10 +78,11 @@ class SentryCrashInstallationReporterTests: XCTestCase {
             XCTAssertEqual(filteredReports?.count, 0)
         }
         
-        XCTAssertEqual(self.testClient.captureCrashEventInvocations.count, 0)
+        XCTAssertEqual(self.testClient.captureFatalEventInvocations.count, 0)
         XCTAssertEqual(sentrycrash_getReportCount(), 0)
     }
     
+    @available(*, deprecated, message: "This is deprecated because SentryOptions integrations is deprecated")
     private func givenSutWithStartedSDK() {
         let options = Options()
         options.dsn = TestConstants.dsnAsString(username: "SentryCrashInstallationReporterTests")
@@ -86,9 +91,9 @@ class SentryCrashInstallationReporterTests: XCTestCase {
         
         testClient = TestClient(options: options)
         let hub = SentryHub(client: testClient, andScope: nil)
-        SentrySDK.setCurrentHub(hub)
+        SentrySDKInternal.setCurrentHub(hub)
         
-        sut = SentryCrashInstallationReporter(inAppLogic: SentryInAppLogic(inAppIncludes: [], inAppExcludes: []), crashWrapper: TestSentryCrashWrapper.sharedInstance(), dispatchQueue: TestSentryDispatchQueueWrapper())
+        sut = SentryCrashInstallationReporter(inAppLogic: SentryInAppLogic(inAppIncludes: [], inAppExcludes: []), crashWrapper: TestSentryCrashWrapper(processInfoWrapper: ProcessInfo.processInfo), dispatchQueue: TestSentryDispatchQueueWrapper())
         sut.install(options.cacheDirectoryPath)
         // Works only if SentryCrash is installed
         sentrycrash_deleteAllReports()

@@ -2,7 +2,6 @@
 #import "SentryFileIOTracker.h"
 #import "SentryNSFileManagerSwizzling.h"
 #import "SentryOptions.h"
-#import "SentrySDK.h"
 #import "SentrySpan.h"
 #import "SentrySpanOperation.h"
 #import "SentrySwizzle.h"
@@ -58,7 +57,7 @@
 
     SentryThreadInspector *threadInspector =
         [[SentryThreadInspector alloc] initWithOptions:options];
-    SentryNSProcessInfoWrapper *processInfoWrapper =
+    id<SentryProcessInfoSource> processInfoWrapper =
         [SentryDependencyContainer.sharedInstance processInfoWrapper];
     self->tracker = [[SentryFileIOTracker alloc] initWithThreadInspector:threadInspector
                                                       processInfoWrapper:processInfoWrapper];
@@ -163,15 +162,16 @@
                             spanCount:(NSUInteger)spanCount
                                 block:(void (^)(void))block
 {
-    SentryTracer *parentTransaction = [SentrySDK startTransactionWithName:@"Transaction"
-                                                                operation:@"Test"
-                                                              bindToScope:YES];
+    SentryTracer *parentTransaction
+        = (SentryTracer *)[SentrySDK startTransactionWithName:@"Transaction"
+                                                    operation:@"Test"
+                                                  bindToScope:YES];
 
     block();
 
     XCTAssertEqual(parentTransaction.children.count, spanCount);
 
-    SentrySpan *ioSpan = parentTransaction.children.firstObject;
+    SentrySpan *ioSpan = (SentrySpan *)parentTransaction.children.firstObject;
     if (spanCount > 0) {
         XCTAssertEqual([ioSpan.data[@"file.size"] unsignedIntValue], someData.length);
         XCTAssertEqualObjects(ioSpan.data[@"file.path"], filePath);

@@ -1,11 +1,11 @@
-@testable import Sentry
-import SentryTestUtils
+@_spi(Private) @testable import Sentry
+@_spi(Private) import SentryTestUtils
 import XCTest
 
 final class SentrySpotlightTransportTests: XCTestCase {
     
     private var options: Options!
-    private var requestManager: TestRequestManager!
+    private var requestManager: SyncTestRequestManager!
     private var requestBuilder: TestNSURLRequestBuilder!
     
     override func setUp() {
@@ -14,8 +14,8 @@ final class SentrySpotlightTransportTests: XCTestCase {
         options = Options()
         options.enableSpotlight = true
         
-        requestManager = TestRequestManager(session: URLSession(configuration: URLSessionConfiguration.ephemeral))
-        
+        requestManager = SyncTestRequestManager(session: URLSession(configuration: URLSessionConfiguration.ephemeral))
+
         requestBuilder = TestNSURLRequestBuilder()
     }
     
@@ -27,6 +27,7 @@ final class SentrySpotlightTransportTests: XCTestCase {
         return SentrySpotlightTransport(options: options, requestManager: requestManager, requestBuilder: requestBuilder, dispatchQueueWrapper: TestSentryDispatchQueueWrapper())
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     private func givenEventEnvelope(withAttachment: Bool = false) throws -> SentryEnvelope {
         let event = TestData.event
         
@@ -42,13 +43,15 @@ final class SentrySpotlightTransportTests: XCTestCase {
         return SentryEnvelope(id: event.eventId, items: envelopeItems)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     private func givenTransactionEnvelope() throws -> SentryEnvelope {
         let transaction = Transaction(level: .debug)
-        transaction.type = SentryEnvelopeItemTypeTransaction
+        transaction.type = SentryEnvelopeItemTypes.transaction
         
         return SentryEnvelope(id: transaction.eventId, items: [SentryEnvelopeItem(event: transaction)])
     }
 
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testShouldSendEventEnvelope() throws {
         let eventEnvelope = try givenEventEnvelope()
         let sut = givenSut()
@@ -61,9 +64,10 @@ final class SentrySpotlightTransportTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, options.spotlightUrl)
         
         let expectedData = try getSerializedGzippedData(envelope: eventEnvelope)
-        XCTAssertEqual(request.httpBody, expectedData)
+        try compareEnvelopes(request.httpBody, expectedData, message: "Envelopes should be equal")
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testShouldSendTransactionEnvelope() throws {
         let transactionEnvelope = try givenTransactionEnvelope()
         let sut = givenSut()
@@ -76,9 +80,10 @@ final class SentrySpotlightTransportTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, options.spotlightUrl)
         
         let expectedData = try getSerializedGzippedData(envelope: transactionEnvelope)
-        XCTAssertEqual(request.httpBody, expectedData)
+        try compareEnvelopes(request.httpBody, expectedData, message: "Envelopes should be equal")
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testShouldRemoveAttachmentsFromEventEnvelope() throws {
         let eventEnvelope = try givenEventEnvelope(withAttachment: true)
         let sut = givenSut()
@@ -96,54 +101,55 @@ final class SentrySpotlightTransportTests: XCTestCase {
         
         // Compressing with GZip doesn't always produce the same results
         // We only want to know if the attachment got removed. Therefore, a comparison with a range is acceptable.
-        XCTAssert((expectedDataCountLower...expectedDataCountUpper).contains(try XCTUnwrap(request.httpBody?.count)))
+        let expectedBodyCountRange = (expectedDataCountLower...expectedDataCountUpper)
+        let actualBodyCount = try XCTUnwrap(request.httpBody?.count)
+        XCTAssertTrue(expectedBodyCountRange.contains(actualBodyCount), "Expected body size to be in range of \(expectedBodyCountRange), but was \(actualBodyCount)")
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testShouldNotSendEnvelope_WhenMalformedURL() throws {
         let eventEnvelope = try givenEventEnvelope()
         requestBuilder.shouldFailWithError = true
         let sut = givenSut(spotlightUrl: TestData.malformedURLString)
         
         sut.send(envelope: eventEnvelope)
-        
-        requestManager.waitForAllRequests()
+
         XCTAssertEqual(self.requestManager.requests.count, 0)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testShouldNotSendEnvelope_WhenRequestError() throws {
         let eventEnvelope = try givenEventEnvelope()
         requestBuilder.shouldFailWithError = true
         let sut = givenSut()
         
         sut.send(envelope: eventEnvelope)
-        
-        requestManager.waitForAllRequests()
+
         XCTAssertEqual(self.requestManager.requests.count, 0)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testShouldNotSendEnvelope_WhenRequestNil() throws {
         let eventEnvelope = try givenEventEnvelope()
         requestBuilder.shouldFailReturningNil = true
         let sut = givenSut()
         
         sut.send(envelope: eventEnvelope)
-        
-        requestManager.waitForAllRequests()
+
         XCTAssertEqual(self.requestManager.requests.count, 0)
     }
     
+    @available(*, deprecated, message: "This is only marked as deprecated because enableAppLaunchProfiling is marked as deprecated. Once that is removed this can be removed.")
     func testShouldLogError_WhenRequestManagerCompletesWithError() throws {
         let logOutput = TestLogOutput()
-        SentryLog.setLogOutput(logOutput)
-        SentryLog.configureLog(true, diagnosticLevel: .debug)
+        SentrySDKLog.setLogOutput(logOutput)
+        SentrySDKLog.configureLog(true, diagnosticLevel: .debug)
         
         let eventEnvelope = try givenEventEnvelope()
         requestManager.nextError = NSError(domain: "error", code: 47)
         let sut = givenSut()
         
         sut.send(envelope: eventEnvelope)
-        
-        requestManager.waitForAllRequests()
         
         let logMessages = logOutput.loggedMessages.filter {
             $0.contains("[Sentry] [error]") &&
@@ -154,8 +160,29 @@ final class SentrySpotlightTransportTests: XCTestCase {
     }
     
     private func getSerializedGzippedData(envelope: SentryEnvelope) throws -> Data {
-        let expectedData = try XCTUnwrap(SentrySerialization.data(with: envelope)) as NSData
-        return sentry_gzippedWithCompressionLevel(expectedData as Data, -1, nil) ?? Data()
+        let expectedData = try XCTUnwrap(SentrySerializationSwift.data(with: envelope)) as NSData
+        return try SentryNSDataUtils.sentry_gzipped(with: expectedData as Data, compressionLevel: -1)
+    }
+}
+
+/// The SentrySpotlightTransport has simple logic and doesn't require the TestRequestManager using dispatch queues to validate its logic.
+/// This simplifies the tests by removing DispatchQueues and makes them more deterministic.
+private class SyncTestRequestManager: NSObject, RequestManager {
+
+    var nextError: NSError?
+    public var isReady: Bool
+
+    var requests = Invocations<URLRequest>()
+
+    public required init(session: URLSession) {
+        self.isReady = true
     }
 
+    public func add( _ request: URLRequest, completionHandler: SentryRequestOperationFinished? = nil) {
+        requests.record(request)
+
+        if let handler = completionHandler {
+            handler(nil, self.nextError)
+        }
+    }
 }

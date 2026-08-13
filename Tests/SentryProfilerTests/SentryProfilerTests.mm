@@ -2,6 +2,7 @@
 
 #if SENTRY_TARGET_PROFILING_SUPPORTED
 
+#    import "SentryContinuousProfiler+Test.h"
 #    import "SentryEvent+Private.h"
 #    import "SentryHub+Test.h"
 #    import "SentryProfileTimeseries.h"
@@ -45,6 +46,21 @@ using namespace sentry::profiling;
     const auto symbols = backtrace_symbols(buffer, nptrs);
     XCTAssertEqualObjects(parseBacktraceSymbolsFunctionName(symbols[0]),
         @"-[SentryProfilerTests testParseFunctionNameWithBacktraceSymbolsInput]");
+}
+
+- (void)testParseFunctionNameWithInvalidUTF8Input
+{
+    // Arrange
+    // Create an invalid UTF-8 sequence: 0xFF is not a valid start byte in UTF-8
+    const char invalidUTF8[] = { (char)0xFF, (char)0xFE, (char)0xFD, 0x00 };
+
+    // Act
+    // Parse the invalid UTF-8 symbol - should handle failure gracefully
+    NSString *result = parseBacktraceSymbolsFunctionName(invalidUTF8);
+
+    // Assert
+    // Should return "<unknown>" when stringWithUTF8String fails
+    XCTAssertEqualObjects(result, @"<unknown>");
 }
 
 - (void)testTraceProfilerCanBeInitializedOnMainThread
@@ -187,7 +203,7 @@ using namespace sentry::profiling;
     const auto profileData = [state copyProfilingData];
 
     const auto serialization = sentry_serializedTraceProfileData(profileData, 1, 2,
-        sentry_profilerTruncationReasonName(SentryProfilerTruncationReasonNormal), @{}, @[],
+        sentry_profilerTruncationReasonName(SentryProfilerTruncationReasonNormal), @{ }, @[],
         [[SentryHub alloc] initWithClient:nil andScope:nil]
 #    if SENTRY_HAS_UIKIT
         ,
